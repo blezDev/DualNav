@@ -1,3 +1,110 @@
 <resources>
     <string name="app_name">DualNav</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_theme_label">App theme</string>
+    <string name="settings_theme_default">Default</string>
+    <string name="settings_theme_default_description">Clean Material look, follows your system\'s dynamic color</string>
+    <string name="settings_theme_bleach">Bleach</string>
+    <string name="settings_theme_bleach_description">Soul Reaper black, crimson, and bone — an anime-inspired look</string>
+    <string name="settings_device_label">Device</string>
+    <string name="settings_change_role">Change role</string>
+    <string name="settings_change_role_description">Switch this phone between Control and Companion</string>
+    <string name="cd_settings">Settings</string>
+
+    <!-- Errors -->
+    <string name="error_disk_full">Storage is full</string>
+    <string name="error_not_found">Not found</string>
+    <string name="error_unknown">Something went wrong</string>
+    <string name="error_bluetooth_unavailable">Bluetooth is unavailable. Turn it on and try again.</string>
+    <string name="error_wifi_unavailable">Wi-Fi is unavailable. Check your connection and try again.</string>
+    <string name="error_firebase_unavailable">Couldn\'t reach the cloud relay. Check your internet connection.</string>
+    <string name="error_permission_denied">Permission needed to continue</string>
+    <string name="error_device_not_found">Device not found</string>
+    <string name="error_timeout">Connection timed out</string>
+    <string name="error_not_connected">Not connected to a device</string>
+    <string name="error_invalid_maps_link">That doesn\'t look like a valid Maps link</string>
+    <string name="error_maps_link_unreachable">Couldn\'t open that link. Check your internet connection.</string>
+    <string name="error_invalid_number">Enter a valid number</string>
+    <string name="error_invalid_latitude">Latitude must be between -90 and 90</string>
+    <string name="error_invalid_longitude">Longitude must be between -180 and 180</string>
+
+    <!-- Role selection -->
+    <string name="role_selection_title">Set up this phone</string>
+    <string name="role_selection_subtitle">Choose how this device will be used</string>
+    <string name="role_control_title">Control phone</string>
+    <string name="role_control_description">Uses Google Maps and sends destinations to the other phone</string>
+    <string name="role_companion_title">Companion phone</string>
+    <string name="role_companion_description">Receives destinations and opens navigation</string>
+    <string name="role_selection_continue">Continue</string>
+
+    <!-- Connection setup -->
+    <string name="connection_setup_title">Connect the two phones</string>
+    <string name="cd_change_role">Change role</string>
+    <string name="connection_type_bluetooth">Bluetooth</string>
+    <string name="connection_type_wifi">Wi-Fi</string>
+    <string name="connection_type_firebase">Cloud relay</string>
+    <string name="connection_setup_discover">Scan for devices</string>
+    <string name="connection_setup_discovering">Scanning…</string>
+    <string name="connection_setup_no_devices">No devices found yet</string>
+    <string name="connection_setup_status_connected">Connected</string>
+    <string name="connection_setup_status_disconnected">Disconnected</string>
+    <string name="connection_setup_status_reconnecting">Reconnecting…</string>
+    <string name="connection_setup_continue">Continue</string>
+    <string name="cd_connection_status_connected">Connected</string>
+    <string name="cd_connection_status_disconnected">Disconnected</string>
+
+    <!-- Control home -->
+    <string name="control_home_title">DualNav Control</string>
+    <string name="control_home_maps_link_label">Paste a Google Maps link</string>
+    <string name="control_home_maps_link_placeholder">https://maps.app.goo.gl/…</string>
+    <string name="control_home_send_destination">Send destination</string>
+    <string name="control_home_manual_entry">Enter coordinates manually</string>
+    <string name="control_home_stop">Stop</string>
+    <string name="control_home_resume">Resume</string>
+    <string name="control_home_add_stop">Add stop</string>
+    <string name="control_home_status_label">Companion status</string>
+    <string name="control_home_destination_sent">Destination sent</string>
+    <string name="control_home_stop_sent">Stop sent</string>
+    <string name="control_home_resume_sent">Resume sent</string>
+    <string name="control_home_stop_added">Stop added</string>
+    <string name="control_home_enable_floating_widget">Enable floating widget</string>
+    <string name="control_home_disable_floating_widget">Disable floating widget</string>
+    <string name="control_home_overlay_permission_needed">Allow DualNav to display over other apps, then try again</string>
+
+    <!-- Floating overlay -->
+    <string name="overlay_notification_channel">Floating widget</string>
+    <string name="overlay_notification_title">DualNav floating widget is active</string>
+    <string name="cd_open_app">Open DualNav</string>
+    <string name="cd_close_overlay">Close floating widget</string>
+
+    <!-- Manual coordinate dialog -->
+    <string name="manual_coordinate_dialog_title">Enter coordinates</string>
+    <string name="manual_coordinate_latitude_label">Latitude</string>
+    <string name="manual_coordinate_longitude_label">Longitude</string>
+    <string name="manual_coordinate_address_label">Label (optional)</string>
+    <string name="manual_coordinate_confirm">Send</string>
+    <string name="manual_coordinate_cancel">Cancel</string>
+
+    <!-- Companion home -->
+    <string name="companion_home_title">Companion phone</string>
+    <string name="companion_home_subtitle">Listening for destinations from the control phone</string>
+    <string name="companion_home_status_label">Connection status</string>
+    <string name="companion_home_activity_label">Recent activity</string>
+    <string name="companion_home_no_activity">Nothing received yet</string>
+    <string name="companion_command_navigate">Navigate to %1$s</string>
+    <string name="companion_command_add_stop">Stop added: %1$s</string>
+    <string name="companion_command_stop">Stop requested</string>
+    <string name="companion_command_resume">Resume requested</string>
+    <string name="companion_command_status_check">Status check received</string>
+
+    <!-- Companion background service -->
+    <string name="companion_ongoing_channel">Companion listener</string>
+    <string name="companion_alert_channel">Navigation alerts</string>
+    <string name="companion_ongoing_notification">Listening for destinations from the control phone</string>
+    <string name="companion_alert_navigate">Navigating to %1$s</string>
+    <string name="companion_alert_add_stop">New stop added: %1$s</string>
+    <string name="companion_alert_stop">The control phone asked you to stop — please stop navigation manually</string>
+    <string name="companion_alert_resume">The control phone asked you to resume — please resume navigation manually</string>
 </resources>
