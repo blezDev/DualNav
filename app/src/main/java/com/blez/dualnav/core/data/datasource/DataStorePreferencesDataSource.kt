@@ -1,6 +1,7 @@
 package com.blez.dualnav.core.data.datasource
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -32,6 +33,7 @@ class DataStorePreferencesDataSource(
         val DEVICE_INFO = stringPreferencesKey("device_info")
         val PAIRED_DEVICES = stringPreferencesKey("paired_devices")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val CONNECTION_ESTABLISHED = booleanPreferencesKey("connection_established")
     }
 
     override suspend fun saveDeviceRole(role: AppRole): EmptyResult<DataError.Local> {
@@ -46,6 +48,10 @@ class DataStorePreferencesDataSource(
                     runCatching { AppRole.valueOf(name) }.getOrNull()
                 }
             }
+    }
+
+    override suspend fun clearDeviceRole(): EmptyResult<DataError.Local> {
+        return writeSafely { it.remove(Keys.DEVICE_ROLE) }
     }
 
     override suspend fun saveConnectionType(connectionType: ConnectionType): EmptyResult<DataError.Local> {
@@ -102,6 +108,16 @@ class DataStorePreferencesDataSource(
                     runCatching { AppThemeMode.valueOf(name) }.getOrNull()
                 }
             }
+    }
+
+    override suspend fun saveConnectionEstablished(established: Boolean): EmptyResult<DataError.Local> {
+        return writeSafely { it[Keys.CONNECTION_ESTABLISHED] = established }
+    }
+
+    override fun isConnectionEstablished(): Flow<Boolean> {
+        return context.dataStore.data
+            .catchIoErrors()
+            .map { prefs -> prefs[Keys.CONNECTION_ESTABLISHED] ?: false }
     }
 
     override suspend fun clearAll(): EmptyResult<DataError.Local> {

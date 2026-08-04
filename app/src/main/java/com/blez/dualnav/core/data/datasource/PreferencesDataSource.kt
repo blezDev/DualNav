@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 interface PreferencesDataSource {
     suspend fun saveDeviceRole(role: AppRole): EmptyResult<DataError.Local>
     fun getDeviceRole(): Flow<AppRole?>
+    suspend fun clearDeviceRole(): EmptyResult<DataError.Local>
     suspend fun saveConnectionType(connectionType: ConnectionType): EmptyResult<DataError.Local>
     fun getConnectionType(): Flow<ConnectionType?>
     suspend fun saveDeviceInfo(deviceInfo: DeviceInfo): EmptyResult<DataError.Local>
@@ -19,5 +20,7 @@ interface PreferencesDataSource {
     fun getPairedDevices(): Flow<List<DeviceInfo>>
     suspend fun saveThemeMode(themeMode: AppThemeMode): EmptyResult<DataError.Local>
     fun getThemeMode(): Flow<AppThemeMode?>
+    suspend fun saveConnectionEstablished(established: Boolean): EmptyResult<DataError.Local>
+    fun isConnectionEstablished(): Flow<Boolean>
     suspend fun clearAll(): EmptyResult<DataError.Local>
 }

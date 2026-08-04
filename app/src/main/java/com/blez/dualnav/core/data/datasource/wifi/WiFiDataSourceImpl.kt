@@ -1,8 +1,11 @@
 package com.blez.dualnav.core.data.datasource.wifi
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Build
+import android.provider.Settings
 import com.blez.dualnav.core.data.datasource.WiFiDataSource
 import com.blez.dualnav.core.domain.model.AppRole
 import com.blez.dualnav.core.domain.model.ConnectionStatus
@@ -51,6 +54,9 @@ class WiFiDataSourceImpl(
     private var connectedSocket: Socket? = null
     private var output: OutputStream? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
+
+    @Volatile
+    private var registeredServiceName: String? = null
 
     override suspend fun connect(): EmptyResult<DataError.Connection> {
         return try {
@@ -127,13 +133,19 @@ class WiFiDataSourceImpl(
     }
 
     private fun registerService() {
+        val requestedName = localDeviceName()
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = WiFiConstants.SERVICE_NAME
+            serviceName = requestedName
             serviceType = WiFiConstants.SERVICE_TYPE
             port = WiFiConstants.PORT
         }
         val listener = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo) = Unit
+            // NSD may rename us on registration (e.g. "(2)" suffix) if our requested name collides
+            // with something already on the network — track the name it actually assigned so
+            // discovery can reliably filter this device's own advertised service back out.
+            override fun onServiceRegistered(info: NsdServiceInfo) {
+                registeredServiceName = info.serviceName
+            }
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
             override fun onServiceUnregistered(info: NsdServiceInfo) = Unit
             override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
@@ -144,9 +156,11 @@ class WiFiDataSourceImpl(
 
     private suspend fun discoverNearbyServices(): List<DeviceInfo> {
         val resolved = mutableListOf<DeviceInfo>()
+        val selfServiceName = registeredServiceName ?: localDeviceName()
         val discoveryListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
             override fun onServiceFound(service: NsdServiceInfo) {
+                if (service.serviceName == selfServiceName) return
                 resolveService(service) { resolved += it }
             }
             override fun onServiceLost(service: NsdServiceInfo) = Unit
@@ -159,7 +173,7 @@ class WiFiDataSourceImpl(
         delay(WiFiConstants.DISCOVERY_WINDOW_MS)
         runCatching { nsdManager.stopServiceDiscovery(discoveryListener) }
 
-        return resolved.distinctBy { it.deviceId }
+        return resolved.filterNot { it.deviceName == selfServiceName }.distinctBy { it.deviceId }
     }
 
     @Suppress("DEPRECATION")
@@ -205,6 +219,14 @@ class WiFiDataSourceImpl(
                 _connectionStatus.value = ConnectionStatus.Disconnected
             }
         }
+    }
+
+    @SuppressLint("HardwareIds")
+    private fun localDeviceName(): String {
+        val androidId =
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        val suffix = androidId?.takeLast(4) ?: System.currentTimeMillis().toString().takeLast(4)
+        return "${Build.MODEL}-$suffix"
     }
 
     private fun String.parseHostPort(): Pair<String, Int>? {

@@ -1,6 +1,7 @@
 package com.blez.dualnav.feature.companion.presentation
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,8 +23,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -31,11 +36,19 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.blez.dualnav.R
 import com.blez.dualnav.core.domain.model.ConnectionStatus
+import com.blez.dualnav.core.presentation.components.ConfirmationDialog
+import com.blez.dualnav.core.presentation.util.CompanionWakeLock
+import com.blez.dualnav.core.presentation.util.ObserveAsEvents
 import com.blez.dualnav.core.presentation.util.UiText
 import com.blez.dualnav.core.presentation.util.asString
+import com.blez.dualnav.feature.overlay.presentation.FloatingOverlayService
+import com.blez.dualnav.feature.overlay.presentation.OverlayPermission
 import com.blez.dualnav.ui.theme.DualNavTheme
 import com.blez.dualnav.ui.theme.LocalIsBleachTheme
 import org.koin.androidx.compose.koinViewModel
@@ -43,21 +56,122 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun CompanionHomeRoot(
     onNavigateToSettings: () -> Unit,
+    onNavigateToRoleSelection: () -> Unit,
     viewModel: CompanionHomeViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    var overlayServiceRunning by remember { mutableStateOf(false) }
+    var showOverlayPermissionDialog by remember { mutableStateOf(false) }
+    var showAccessibilityPermissionDialog by remember { mutableStateOf(false) }
+
+    fun refreshOverlay() {
+        if (OverlayPermission.isGranted(context)) {
+            if (!overlayServiceRunning) {
+                context.startForegroundService(Intent(context, FloatingOverlayService::class.java))
+                overlayServiceRunning = true
+            }
+        } else {
+            showOverlayPermissionDialog = true
+        }
+    }
+
+    fun refreshAccessibility() {
+        if (!MapsControlAccessibilityPermission.isEnabled(context)) {
+            showAccessibilityPermissionDialog = true
+        }
+    }
+
     LaunchedEffect(Unit) {
         context.startForegroundService(Intent(context, CommandReceiverService::class.java))
     }
 
-    CompanionHomeScreen(state = state, onNavigateToSettings = onNavigateToSettings)
+    // The floating widget needs to be up for as long as this screen represents an active
+    // Companion session — including while backgrounded behind Google Maps, not just while
+    // visible — so it's tied to this composable's lifetime, not Android's resumed/paused state.
+    DisposableEffect(Unit) {
+        CompanionWakeLock.acquire(context)
+        refreshOverlay()
+        refreshAccessibility()
+        onDispose {
+            CompanionWakeLock.release()
+            if (overlayServiceRunning) {
+                context.stopService(Intent(context, FloatingOverlayService::class.java))
+                overlayServiceRunning = false
+            }
+        }
+    }
+
+    // Permissions can only change in Settings, outside this screen — re-check whenever the
+    // user comes back to it, since there's no listener API for either permission.
+    ObserveOnResume {
+        refreshOverlay()
+        refreshAccessibility()
+    }
+
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            CompanionHomeEvent.NavigateToRoleSelection -> onNavigateToRoleSelection()
+        }
+    }
+
+    CompanionHomeScreen(
+        state = state,
+        onAction = viewModel::onAction,
+        onNavigateToSettings = onNavigateToSettings
+    )
+
+    if (showOverlayPermissionDialog) {
+        ConfirmationDialog(
+            title = stringResource(R.string.overlay_permission_title),
+            message = stringResource(R.string.overlay_permission_message),
+            confirmText = stringResource(R.string.overlay_permission_enable),
+            dismissText = stringResource(R.string.overlay_permission_cancel),
+            onConfirm = {
+                showOverlayPermissionDialog = false
+                context.startActivity(OverlayPermission.createRequestIntent(context))
+            },
+            onDismiss = { showOverlayPermissionDialog = false }
+        )
+    }
+
+    if (showAccessibilityPermissionDialog) {
+        ConfirmationDialog(
+            title = stringResource(R.string.accessibility_permission_title),
+            message = stringResource(R.string.accessibility_permission_message),
+            confirmText = stringResource(R.string.accessibility_permission_enable),
+            dismissText = stringResource(R.string.accessibility_permission_cancel),
+            onConfirm = {
+                showAccessibilityPermissionDialog = false
+                context.startActivity(MapsControlAccessibilityPermission.createRequestIntent())
+            },
+            onDismiss = { showAccessibilityPermissionDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun ObserveOnResume(onResume: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) onResume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CompanionHomeScreen(state: CompanionHomeState, onNavigateToSettings: () -> Unit = {}) {
+fun CompanionHomeScreen(
+    state: CompanionHomeState,
+    onAction: (CompanionHomeAction) -> Unit = {},
+    onNavigateToSettings: () -> Unit = {}
+) {
+    BackHandler { onAction(CompanionHomeAction.OnBackPress) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -104,6 +218,17 @@ fun CompanionHomeScreen(state: CompanionHomeState, onNavigateToSettings: () -> U
                 }
             }
         }
+    }
+
+    if (state.showDisconnectConfirmation) {
+        ConfirmationDialog(
+            title = stringResource(R.string.disconnect_confirm_title),
+            message = stringResource(R.string.disconnect_confirm_message),
+            confirmText = stringResource(R.string.disconnect_confirm_yes),
+            dismissText = stringResource(R.string.disconnect_confirm_no),
+            onConfirm = { onAction(CompanionHomeAction.OnDisconnectConfirmed) },
+            onDismiss = { onAction(CompanionHomeAction.OnDisconnectCancelled) }
+        )
     }
 }
 

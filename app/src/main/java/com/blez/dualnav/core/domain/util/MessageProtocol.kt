@@ -16,6 +16,12 @@ data class MessageEnvelope(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+@Serializable
+data class PairingRequestPayload(val deviceName: String, val pin: String)
+
+/** An incoming pairing request, with the sender's stable device id pulled from the envelope. */
+data class PairingRequest(val senderId: String, val deviceName: String, val pin: String)
+
 /**
  * Wraps/unwraps the string each transport's `sendMessage(String)`/`receiveMessage(): Flow<String>`
  * actually carries. Kept separate from the per-transport data sources since every transport
@@ -23,6 +29,9 @@ data class MessageEnvelope(
  */
 object MessageProtocol {
     private const val TYPE_STATUS = "STATUS"
+    private const val TYPE_PAIR_REQUEST = "PAIR_REQUEST"
+    private const val TYPE_PAIR_ACCEPT = "PAIR_ACCEPT"
+    private const val TYPE_PAIR_REJECT = "PAIR_REJECT"
 
     fun wrapCommand(command: NavigationCommand, senderId: String, receiverId: String, json: Json): String {
         val envelope = MessageEnvelope(
@@ -48,8 +57,79 @@ object MessageProtocol {
     fun unwrapCommand(raw: String, json: Json): NavigationCommand? {
         val envelope = runCatching { json.decodeFromString(MessageEnvelope.serializer(), raw) }.getOrNull()
             ?: return null
-        if (envelope.messageType == TYPE_STATUS) return null
-        return runCatching { json.decodeFromString(NavigationCommand.serializer(), envelope.payload) }.getOrNull()
+        if (envelope.messageType != TYPE_STATUS && envelope.messageType != TYPE_PAIR_REQUEST &&
+            envelope.messageType != TYPE_PAIR_ACCEPT && envelope.messageType != TYPE_PAIR_REJECT
+        ) {
+            return runCatching {
+                json.decodeFromString(
+                    NavigationCommand.serializer(),
+                    envelope.payload
+                )
+            }.getOrNull()
+        }
+        return null
+    }
+
+    fun wrapPairingRequest(
+        deviceName: String,
+        pin: String,
+        senderId: String,
+        receiverId: String,
+        json: Json
+    ): String {
+        val envelope = MessageEnvelope(
+            messageType = TYPE_PAIR_REQUEST,
+            payload = json.encodeToString(
+                PairingRequestPayload.serializer(),
+                PairingRequestPayload(deviceName, pin)
+            ),
+            senderId = senderId,
+            receiverId = receiverId
+        )
+        return json.encodeToString(MessageEnvelope.serializer(), envelope)
+    }
+
+    fun wrapPairingResponse(
+        accepted: Boolean,
+        senderId: String,
+        receiverId: String,
+        json: Json
+    ): String {
+        val envelope = MessageEnvelope(
+            messageType = if (accepted) TYPE_PAIR_ACCEPT else TYPE_PAIR_REJECT,
+            payload = "",
+            senderId = senderId,
+            receiverId = receiverId
+        )
+        return json.encodeToString(MessageEnvelope.serializer(), envelope)
+    }
+
+    /** Returns null for anything that isn't a pairing request envelope, or malformed input. */
+    fun unwrapPairingRequest(raw: String, json: Json): PairingRequest? {
+        val envelope =
+            runCatching { json.decodeFromString(MessageEnvelope.serializer(), raw) }.getOrNull()
+                ?: return null
+        if (envelope.messageType != TYPE_PAIR_REQUEST) return null
+        val payload = runCatching {
+            json.decodeFromString(PairingRequestPayload.serializer(), envelope.payload)
+        }.getOrNull() ?: return null
+        return PairingRequest(
+            senderId = envelope.senderId,
+            deviceName = payload.deviceName,
+            pin = payload.pin
+        )
+    }
+
+    /** Returns null for anything that isn't a pairing response envelope, or malformed input. Otherwise true = accepted. */
+    fun unwrapPairingResponse(raw: String, json: Json): Boolean? {
+        val envelope =
+            runCatching { json.decodeFromString(MessageEnvelope.serializer(), raw) }.getOrNull()
+                ?: return null
+        return when (envelope.messageType) {
+            TYPE_PAIR_ACCEPT -> true
+            TYPE_PAIR_REJECT -> false
+            else -> null
+        }
     }
 
     private fun NavigationCommand.messageType(): String = when (this) {

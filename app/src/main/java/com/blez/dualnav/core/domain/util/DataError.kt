@@ -15,6 +15,7 @@ sealed interface DataError : Error {
         DEVICE_NOT_FOUND,
         TIMEOUT,
         NOT_CONNECTED,
+        PAIRING_REJECTED,
         UNKNOWN
     }
 }

@@ -1,5 +1,7 @@
 package com.blez.dualnav.feature.role.presentation
 
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,7 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.blez.dualnav.R
 import com.blez.dualnav.core.domain.model.AppRole
+import com.blez.dualnav.core.presentation.components.ConfirmationDialog
 import com.blez.dualnav.core.presentation.util.ObserveAsEvents
 import com.blez.dualnav.ui.theme.DualNavTheme
 import org.koin.androidx.compose.koinViewModel
@@ -39,22 +42,24 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun RoleSelectionRoot(
     onNavigateNext: (AppRole) -> Unit,
-    onNavigateBack: (() -> Unit)? = null,
+    onNavigateToSettings: () -> Unit,
     viewModel: RoleSelectionViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val activity = LocalActivity.current
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
             is RoleSelectionEvent.NavigateNext -> onNavigateNext(event.role)
             is RoleSelectionEvent.ShowError -> Unit
+            RoleSelectionEvent.ExitApp -> activity?.finish()
         }
     }
 
     RoleSelectionScreen(
         state = state,
         onAction = viewModel::onAction,
-        onNavigateBack = onNavigateBack
+        onNavigateToSettings = onNavigateToSettings
     )
 }
 
@@ -63,20 +68,23 @@ fun RoleSelectionRoot(
 fun RoleSelectionScreen(
     state: RoleSelectionState,
     onAction: (RoleSelectionAction) -> Unit,
-    onNavigateBack: (() -> Unit)? = null
+    onNavigateToSettings: () -> Unit = {}
 ) {
+    BackHandler { onAction(RoleSelectionAction.OnBackPress) }
+
     Scaffold(
         topBar = {
-            if (onNavigateBack != null) {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.role_selection_title)) },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                        }
+            TopAppBar(
+                title = { Text(stringResource(R.string.role_selection_title)) },
+                actions = {
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = stringResource(R.string.cd_settings)
+                        )
                     }
-                )
-            }
+                }
+            )
         }
     ) { innerPadding ->
         Column(
@@ -86,12 +94,6 @@ fun RoleSelectionScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (onNavigateBack == null) {
-                Text(
-                    text = stringResource(R.string.role_selection_title),
-                    style = MaterialTheme.typography.headlineSmall
-                )
-            }
             Text(
                 text = stringResource(R.string.role_selection_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
@@ -127,6 +129,17 @@ fun RoleSelectionScreen(
                 }
             }
         }
+    }
+
+    if (state.showExitConfirmation) {
+        ConfirmationDialog(
+            title = stringResource(R.string.exit_app_title),
+            message = stringResource(R.string.exit_app_message),
+            confirmText = stringResource(R.string.exit_app_confirm),
+            dismissText = stringResource(R.string.exit_app_cancel),
+            onConfirm = { onAction(RoleSelectionAction.OnExitConfirmed) },
+            onDismiss = { onAction(RoleSelectionAction.OnExitCancelled) }
+        )
     }
 }
 
@@ -184,8 +197,7 @@ private fun RoleSelectionScreenDarkPreview() {
     DualNavTheme {
         RoleSelectionScreen(
             state = RoleSelectionState(selectedRole = AppRole.COMPANION),
-            onAction = {},
-            onNavigateBack = {}
+            onAction = {}
         )
     }
 }

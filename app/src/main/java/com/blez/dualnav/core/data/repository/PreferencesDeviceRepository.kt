@@ -8,6 +8,7 @@ import com.blez.dualnav.core.domain.util.DataError
 import com.blez.dualnav.core.domain.util.EmptyResult
 import com.blez.dualnav.core.domain.util.Result
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
 class PreferencesDeviceRepository(
@@ -20,6 +21,10 @@ class PreferencesDeviceRepository(
 
     override suspend fun setDeviceRole(role: AppRole): EmptyResult<DataError.Local> {
         return preferencesDataSource.saveDeviceRole(role)
+    }
+
+    override suspend fun clearDeviceRole(): EmptyResult<DataError.Local> {
+        return preferencesDataSource.clearDeviceRole()
     }
 
     override suspend fun getPairedDevice(): Result<DeviceInfo?, DataError.Local> {
@@ -53,5 +58,13 @@ class PreferencesDeviceRepository(
         } catch (e: Exception) {
             Result.Error(DataError.Local.UNKNOWN)
         }
+    }
+
+    override fun isConnectionEstablished(): Flow<Boolean> {
+        return preferencesDataSource.isConnectionEstablished()
+    }
+
+    override suspend fun setConnectionEstablished(established: Boolean): EmptyResult<DataError.Local> {
+        return preferencesDataSource.saveConnectionEstablished(established)
     }
 }

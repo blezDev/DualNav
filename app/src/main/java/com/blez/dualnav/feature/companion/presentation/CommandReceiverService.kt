@@ -21,6 +21,7 @@ import com.blez.dualnav.core.domain.repository.DeviceRepository
 import com.blez.dualnav.core.domain.repository.MessageRepository
 import com.blez.dualnav.core.domain.repository.PreferencesRepository
 import com.blez.dualnav.feature.companion.domain.MapsIntentHandler
+import com.blez.dualnav.feature.companion.domain.NavigationSessionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,10 +32,11 @@ import org.koin.android.ext.android.inject
 
 /**
  * Keeps listening for [NavigationCommand]s while this app is backgrounded (the Companion phone's
- * screen is normally showing Google Maps, not DualNav). Only [NavigationCommand.Navigate] has a
- * real effect on the Maps app itself — there is no public Android API for a third-party app to
- * pause/resume/redirect an in-progress Google Maps turn-by-turn session, so Stop/Resume/AddStop
- * surface as notifications for the person holding the phone to act on manually.
+ * screen is normally showing Google Maps, not DualNav). Navigate/Stop/Resume/AddStop all act on
+ * the Maps app directly: Navigate/Resume/AddStop via a launched Intent, Stop via the accessibility
+ * service (there's no public Android API to pause another app's live navigation any other way —
+ * see [MapsControlAccessibilityService]). If accessibility isn't enabled, Stop/AddStop fall back
+ * to a notification asking the person holding the phone to act manually.
  */
 class CommandReceiverService : Service() {
 
@@ -42,6 +44,7 @@ class CommandReceiverService : Service() {
     private val preferencesRepository: PreferencesRepository by inject()
     private val deviceRepository: DeviceRepository by inject()
     private val mapsIntentHandler: MapsIntentHandler by inject()
+    private val navigationSessionState: NavigationSessionState by inject()
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -63,16 +66,62 @@ class CommandReceiverService : Service() {
     private suspend fun handleCommand(command: NavigationCommand) {
         when (command) {
             is NavigationCommand.Navigate -> {
-                mapsIntentHandler.openNavigation(command.destination)
+                navigationSessionState.setDestination(command.destination)
+                navigationSessionState.setTravelMode(command.travelMode)
+                mapsIntentHandler.openNavigation(command.destination, command.travelMode)
                 notifyAlert(NAVIGATE_ALERT_ID, getString(R.string.companion_alert_navigate, command.destination.address))
             }
-            is NavigationCommand.AddStop -> {
-                notifyAlert(ADD_STOP_ALERT_ID, getString(R.string.companion_alert_add_stop, command.destination.address))
-            }
-            NavigationCommand.Stop -> notifyAlert(STOP_ALERT_ID, getString(R.string.companion_alert_stop))
-            NavigationCommand.Resume -> notifyAlert(RESUME_ALERT_ID, getString(R.string.companion_alert_resume))
+
+            is NavigationCommand.AddStop -> handleAddStop(command)
+            NavigationCommand.Stop -> handleStop()
+            NavigationCommand.Resume -> handleResume()
             is NavigationCommand.StatusCheck -> replyWithStatus()
         }
+    }
+
+    private fun handleStop() {
+        val stopped = mapsIntentHandler.stopNavigation()
+        val message = if (stopped) {
+            getString(R.string.companion_alert_stop_auto)
+        } else {
+            getString(R.string.companion_alert_stop)
+        }
+        notifyAlert(STOP_ALERT_ID, message)
+    }
+
+    private fun handleResume() {
+        val destination = navigationSessionState.getDestination()
+        if (destination != null) {
+            mapsIntentHandler.openNavigationWithStops(
+                destination,
+                navigationSessionState.getStops(),
+                navigationSessionState.getTravelMode()
+            )
+            notifyAlert(RESUME_ALERT_ID, getString(R.string.companion_alert_resume_auto))
+        } else {
+            notifyAlert(RESUME_ALERT_ID, getString(R.string.companion_alert_resume))
+        }
+    }
+
+    private fun handleAddStop(command: NavigationCommand.AddStop) {
+        mapsIntentHandler.stopNavigation()
+        navigationSessionState.setTravelMode(command.travelMode)
+        navigationSessionState.addStop(command.destination)
+
+        val destination = navigationSessionState.getDestination()
+        if (destination != null) {
+            mapsIntentHandler.openNavigationWithStops(
+                destination,
+                navigationSessionState.getStops(),
+                navigationSessionState.getTravelMode()
+            )
+        } else {
+            mapsIntentHandler.openNavigation(command.destination, command.travelMode)
+        }
+        notifyAlert(
+            ADD_STOP_ALERT_ID,
+            getString(R.string.companion_alert_add_stop, command.destination.address)
+        )
     }
 
     private suspend fun replyWithStatus() {

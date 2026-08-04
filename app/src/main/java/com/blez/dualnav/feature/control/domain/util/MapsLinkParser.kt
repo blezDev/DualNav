@@ -10,14 +10,29 @@ import java.net.URLDecoder
  */
 internal object MapsLinkParser {
 
-    private val COORDINATE_PATTERNS = listOf(
-        Regex("""@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)"""),
-        Regex("""[?&]q=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)"""),
-        Regex("""[?&]ll=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)"""),
-        Regex("""[?&]daddr=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)""")
+    // Ordered most-precise-first. The `@lat,lng` viewport pattern is checked last on purpose:
+    // it's the map *camera* position, not the destination — for a place link it's often the
+    // surrounding city/area (zoomed out), and for a directions link it's the midpoint of the
+    // route, not either endpoint. The `!3d`/`!4d` and `!1d`/`!2d` markers in the URL's data blob
+    // are the actual pin/destination coordinates Google Maps uses internally.
+    private val COORDINATE_EXTRACTORS: List<(String) -> Pair<Double, Double>?> = listOf(
+        regexExtractor(
+            """!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)""",
+            latFirst = true
+        ), // place pin: lat,lng
+        regexExtractor(
+            """!1d(-?\d{1,3}\.\d+)!2d(-?\d{1,3}\.\d+)""",
+            latFirst = false
+        ), // directions destination: lng,lat
+        regexExtractor("""[?&]destination=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)""", latFirst = true),
+        regexExtractor("""[?&]daddr=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)""", latFirst = true),
+        regexExtractor("""[?&]q=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)""", latFirst = true),
+        regexExtractor("""[?&]ll=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)""", latFirst = true),
+        regexExtractor("""@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)""", latFirst = true)
     )
 
     private val PLACE_NAME_PATTERN = Regex("""/place/([^/@]+)/""")
+    private val DIR_DESTINATION_NAME_PATTERN = Regex("""/dir/[^/]+/([^/@]+)/""")
 
     private val SHORT_LINK_HOSTS = setOf("maps.app.goo.gl", "goo.gl", "g.co")
 
@@ -27,12 +42,10 @@ internal object MapsLinkParser {
     }
 
     fun parse(url: String): Destination? {
-        val match = COORDINATE_PATTERNS.firstNotNullOfOrNull { it.find(url) } ?: return null
-        val latitude = match.groupValues[1].toDoubleOrNull() ?: return null
-        val longitude = match.groupValues[2].toDoubleOrNull() ?: return null
-        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
+        val (latitude, longitude) = COORDINATE_EXTRACTORS.firstNotNullOfOrNull { it(url) }
+            ?: return null
 
-        val address = PLACE_NAME_PATTERN.find(url)
+        val address = (PLACE_NAME_PATTERN.find(url) ?: DIR_DESTINATION_NAME_PATTERN.find(url))
             ?.groupValues
             ?.get(1)
             ?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
@@ -40,5 +53,24 @@ internal object MapsLinkParser {
             .orEmpty()
 
         return Destination(latitude = latitude, longitude = longitude, address = address)
+    }
+
+    private fun regexExtractor(
+        pattern: String,
+        latFirst: Boolean
+    ): (String) -> Pair<Double, Double>? {
+        val regex = Regex(pattern)
+        return { url ->
+            regex.find(url)?.let { match ->
+                val first = match.groupValues[1].toDoubleOrNull()
+                val second = match.groupValues[2].toDoubleOrNull()
+                if (first == null || second == null) {
+                    null
+                } else {
+                    val (lat, lng) = if (latFirst) first to second else second to first
+                    if (lat in -90.0..90.0 && lng in -180.0..180.0) lat to lng else null
+                }
+            }
+        }
     }
 }

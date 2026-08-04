@@ -29,22 +29,29 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.blez.dualnav.R
 import com.blez.dualnav.core.domain.model.AppThemeMode
+import com.blez.dualnav.core.presentation.components.ConfirmationDialog
+import com.blez.dualnav.core.presentation.util.ObserveAsEvents
 import com.blez.dualnav.ui.theme.DualNavTheme
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
 fun SettingsRoot(
     onNavigateBack: () -> Unit,
-    onChangeRoleClick: () -> Unit,
+    onNavigateToRoleSelection: () -> Unit,
     viewModel: SettingsViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            SettingsEvent.NavigateToRoleSelection -> onNavigateToRoleSelection()
+        }
+    }
+
     SettingsScreen(
         state = state,
         onAction = viewModel::onAction,
-        onNavigateBack = onNavigateBack,
-        onChangeRoleClick = onChangeRoleClick
+        onNavigateBack = onNavigateBack
     )
 }
 
@@ -53,8 +60,7 @@ fun SettingsRoot(
 fun SettingsScreen(
     state: SettingsState,
     onAction: (SettingsAction) -> Unit,
-    onNavigateBack: () -> Unit,
-    onChangeRoleClick: () -> Unit = {}
+    onNavigateBack: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -93,29 +99,47 @@ fun SettingsScreen(
                 onClick = { onAction(SettingsAction.OnThemeSelected(AppThemeMode.BLEACH)) }
             )
 
-            Text(
-                text = stringResource(R.string.settings_device_label),
-                style = MaterialTheme.typography.titleMedium
-            )
+            if (state.isConnected) {
+                Text(
+                    text = stringResource(R.string.settings_connection_label),
+                    style = MaterialTheme.typography.titleMedium
+                )
 
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .selectable(selected = false, onClick = onChangeRoleClick)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = false,
+                            onClick = { onAction(SettingsAction.OnDisconnectClick) })
                 ) {
-                    Text(text = stringResource(R.string.settings_change_role), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = stringResource(R.string.settings_change_role_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_disconnect),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = stringResource(R.string.settings_disconnect_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (state.showDisconnectConfirmation) {
+        ConfirmationDialog(
+            title = stringResource(R.string.disconnect_confirm_title),
+            message = stringResource(R.string.disconnect_confirm_message),
+            confirmText = stringResource(R.string.disconnect_confirm_yes),
+            dismissText = stringResource(R.string.disconnect_confirm_no),
+            onConfirm = { onAction(SettingsAction.OnDisconnectConfirmed) },
+            onDismiss = { onAction(SettingsAction.OnDisconnectCancelled) }
+        )
     }
 }
 

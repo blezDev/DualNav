@@ -41,25 +41,21 @@ fun DualNavHost(
                 startDestination = destination.toRoute(),
                 modifier = modifier
             ) {
+                val toRoleSelection: () -> Unit = {
+                    navController.navigate(RoleSelectionRoute) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+                }
                 composable<RoleSelectionRoute> {
-                    // Reachable two ways: as the app's very first screen (nothing to go back to)
-                    // or via Settings > Change role (something to cancel back out to).
-                    val canNavigateBack = navController.previousBackStackEntry != null
                     RoleSelectionRoot(
                         onNavigateNext = {
                             // Both roles need the transport re-established each session, so both
                             // land on connection setup next, not directly on their home screen.
-                            // Clearing the whole back stack (not just this route) means a role
-                            // change from Settings can't leave the old role's screens reachable.
                             navController.navigate(ConnectionSetupRoute) {
                                 popUpTo(navController.graph.id) { inclusive = true }
                             }
                         },
-                        onNavigateBack = if (canNavigateBack) {
-                            { navController.popBackStack() }
-                        } else {
-                            null
-                        }
+                        onNavigateToSettings = { navController.navigate(SettingsRoute) }
                     )
                 }
                 composable<ConnectionSetupRoute> {
@@ -72,19 +68,26 @@ fun DualNavHost(
                         },
                         // ConnectionSetupRoute is often the start destination on resume, so there's
                         // nothing to pop back to — navigate to role selection explicitly instead.
-                        onNavigateBackToRoleSelection = { navController.navigate(RoleSelectionRoute) }
+                        onNavigateBackToRoleSelection = { navController.navigate(RoleSelectionRoute) },
+                        onNavigateToSettings = { navController.navigate(SettingsRoute) }
                     )
                 }
                 composable<ControlHomeRoute> {
-                    ControlHomeRoot(onNavigateToSettings = { navController.navigate(SettingsRoute) })
+                    ControlHomeRoot(
+                        onNavigateToSettings = { navController.navigate(SettingsRoute) },
+                        onNavigateToRoleSelection = toRoleSelection
+                    )
                 }
                 composable<CompanionHomeRoute> {
-                    CompanionHomeRoot(onNavigateToSettings = { navController.navigate(SettingsRoute) })
+                    CompanionHomeRoot(
+                        onNavigateToSettings = { navController.navigate(SettingsRoute) },
+                        onNavigateToRoleSelection = toRoleSelection
+                    )
                 }
                 composable<SettingsRoute> {
                     SettingsRoot(
                         onNavigateBack = { navController.popBackStack() },
-                        onChangeRoleClick = { navController.navigate(RoleSelectionRoute) }
+                        onNavigateToRoleSelection = toRoleSelection
                     )
                 }
             }
@@ -95,8 +98,8 @@ fun DualNavHost(
 private fun AppStartDestination.toRoute(): Any = when (this) {
     AppStartDestination.Loading -> RoleSelectionRoute
     AppStartDestination.RoleSelection -> RoleSelectionRoute
-    AppStartDestination.ResumeControl -> ConnectionSetupRoute
-    AppStartDestination.ResumeCompanion -> ConnectionSetupRoute
+    AppStartDestination.ResumeControlHome -> ControlHomeRoute
+    AppStartDestination.ResumeCompanionHome -> CompanionHomeRoute
 }
 
 @Composable

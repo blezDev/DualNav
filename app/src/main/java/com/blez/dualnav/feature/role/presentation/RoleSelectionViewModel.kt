@@ -29,6 +29,13 @@ class RoleSelectionViewModel(
                 _state.update { it.copy(selectedRole = action.role) }
             }
             RoleSelectionAction.OnContinueClick -> confirmRole()
+            RoleSelectionAction.OnBackPress -> _state.update { it.copy(showExitConfirmation = true) }
+            RoleSelectionAction.OnExitCancelled -> _state.update { it.copy(showExitConfirmation = false) }
+            RoleSelectionAction.OnExitConfirmed -> viewModelScope.launch {
+                _events.send(
+                    RoleSelectionEvent.ExitApp
+                )
+            }
         }
     }
 

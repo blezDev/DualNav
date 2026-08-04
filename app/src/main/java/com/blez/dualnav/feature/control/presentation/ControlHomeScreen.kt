@@ -1,8 +1,6 @@
 package com.blez.dualnav.feature.control.presentation
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -25,6 +25,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -32,13 +35,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,10 +50,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.blez.dualnav.R
 import com.blez.dualnav.core.domain.model.ConnectionStatus
+import com.blez.dualnav.core.domain.model.TravelMode
+import com.blez.dualnav.core.presentation.components.ConfirmationDialog
 import com.blez.dualnav.core.presentation.util.ObserveAsEvents
 import com.blez.dualnav.core.presentation.util.asString
-import com.blez.dualnav.feature.overlay.presentation.FloatingOverlayService
-import com.blez.dualnav.feature.overlay.presentation.OverlayPermission
 import com.blez.dualnav.ui.theme.DualNavTheme
 import com.blez.dualnav.ui.theme.LocalIsBleachTheme
 import kotlinx.coroutines.launch
@@ -59,6 +62,7 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun ControlHomeRoot(
     onNavigateToSettings: () -> Unit,
+    onNavigateToRoleSelection: () -> Unit,
     viewModel: ControlHomeViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -72,6 +76,7 @@ fun ControlHomeRoot(
                 val message = event.message.asString(context)
                 scope.launch { snackbarHostState.showSnackbar(message) }
             }
+            ControlHomeEvent.NavigateToRoleSelection -> onNavigateToRoleSelection()
         }
     }
 
@@ -91,6 +96,16 @@ fun ControlHomeScreen(
     onAction: (ControlHomeAction) -> Unit,
     onNavigateToSettings: () -> Unit = {}
 ) {
+    BackHandler { onAction(ControlHomeAction.OnBackPress) }
+
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    fun dismissKeyboard() {
+        keyboardController?.hide()
+        focusManager.clearFocus()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -122,8 +137,16 @@ fun ControlHomeScreen(
                 singleLine = true
             )
 
+            TravelModeRow(
+                selected = state.travelMode,
+                onSelected = { onAction(ControlHomeAction.OnTravelModeSelected(it)) }
+            )
+
             Button(
-                onClick = { onAction(ControlHomeAction.OnSendMapsLinkClick) },
+                onClick = {
+                    dismissKeyboard()
+                    onAction(ControlHomeAction.OnSendMapsLinkClick)
+                },
                 enabled = state.mapsLink.isNotBlank() && !state.isSendingLink,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -162,19 +185,73 @@ fun ControlHomeScreen(
                     Text(stringResource(R.string.control_home_resume))
                 }
                 OutlinedButton(
-                    onClick = { onAction(ControlHomeAction.OnAddStopClick) },
+                    onClick = {
+                        dismissKeyboard()
+                        onAction(ControlHomeAction.OnAddStopClick)
+                    },
+                    enabled = !state.isSendingLink,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(stringResource(R.string.control_home_add_stop))
                 }
             }
-
-            FloatingWidgetToggleButton(modifier = Modifier.fillMaxWidth())
         }
     }
 
     if (state.showManualDialog) {
         ManualCoordinateDialog(state = state, onAction = onAction)
+    }
+
+    if (state.showDisconnectConfirmation) {
+        ConfirmationDialog(
+            title = stringResource(R.string.disconnect_confirm_title),
+            message = stringResource(R.string.disconnect_confirm_message),
+            confirmText = stringResource(R.string.disconnect_confirm_yes),
+            dismissText = stringResource(R.string.disconnect_confirm_no),
+            onConfirm = { onAction(ControlHomeAction.OnDisconnectConfirmed) },
+            onDismiss = { onAction(ControlHomeAction.OnDisconnectCancelled) }
+        )
+    }
+}
+
+private data class TravelModeOption(
+    val mode: TravelMode,
+    val labelRes: Int,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TravelModeRow(selected: TravelMode, onSelected: (TravelMode) -> Unit) {
+    val options = listOf(
+        TravelModeOption(
+            TravelMode.CAR,
+            R.string.control_home_travel_mode_car,
+            Icons.Filled.DirectionsCar
+        ),
+        TravelModeOption(
+            TravelMode.TWO_WHEELER,
+            R.string.control_home_travel_mode_two_wheeler,
+            Icons.Filled.TwoWheeler
+        )
+    )
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        options.forEachIndexed { index, option ->
+            SegmentedButton(
+                selected = selected == option.mode,
+                onClick = { onSelected(option.mode) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                icon = {
+                    Icon(
+                        imageVector = option.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            ) {
+                Text(stringResource(option.labelRes))
+            }
+        }
     }
 }
 
@@ -226,45 +303,6 @@ private fun ConnectionStatusRow(status: ConnectionStatus) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun FloatingWidgetToggleButton(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var isOverlayActive by remember { mutableStateOf(false) }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        if (OverlayPermission.isGranted(context)) {
-            context.startForegroundService(Intent(context, FloatingOverlayService::class.java))
-            isOverlayActive = true
-        }
-    }
-
-    OutlinedButton(
-        onClick = {
-            when {
-                isOverlayActive -> {
-                    context.stopService(Intent(context, FloatingOverlayService::class.java))
-                    isOverlayActive = false
-                }
-                OverlayPermission.isGranted(context) -> {
-                    context.startForegroundService(Intent(context, FloatingOverlayService::class.java))
-                    isOverlayActive = true
-                }
-                else -> permissionLauncher.launch(OverlayPermission.createRequestIntent(context))
-            }
-        },
-        modifier = modifier
-    ) {
-        Text(
-            stringResource(
-                if (isOverlayActive) R.string.control_home_disable_floating_widget
-                else R.string.control_home_enable_floating_widget
-            )
-        )
     }
 }
 

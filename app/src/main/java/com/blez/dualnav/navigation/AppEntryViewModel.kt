@@ -9,15 +9,17 @@ import com.blez.dualnav.core.domain.repository.PreferencesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Resolves where the NavHost should start: a device with no saved role goes through role
- * selection, a device with a saved role resumes at connection setup (transports don't
- * survive process death, so the connection always needs re-establishing on launch).
+ * Resolves where the NavHost should start: role selection is the default unless a connection
+ * has actually been established before, in which case the app opens directly on that role's
+ * home screen (the transport itself is re-established there, since sockets don't survive
+ * process death).
  * Also surfaces the persisted [AppThemeMode] so [com.blez.dualnav.MainActivity] can apply it
  * app-wide and react live when it's changed from Settings.
  */
@@ -35,10 +37,12 @@ class AppEntryViewModel(
 
     init {
         viewModelScope.launch {
-            val destination = when (deviceRepository.getDeviceRole()) {
-                AppRole.CONTROL -> AppStartDestination.ResumeControl
-                AppRole.COMPANION -> AppStartDestination.ResumeCompanion
-                null -> AppStartDestination.RoleSelection
+            val role = deviceRepository.getDeviceRole()
+            val established = deviceRepository.isConnectionEstablished().first()
+            val destination = when {
+                role == AppRole.CONTROL && established -> AppStartDestination.ResumeControlHome
+                role == AppRole.COMPANION && established -> AppStartDestination.ResumeCompanionHome
+                else -> AppStartDestination.RoleSelection
             }
             _startDestination.update { destination }
         }

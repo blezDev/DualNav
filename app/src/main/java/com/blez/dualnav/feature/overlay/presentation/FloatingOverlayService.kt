@@ -27,30 +27,20 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.blez.dualnav.MainActivity
 import com.blez.dualnav.R
-import com.blez.dualnav.core.domain.model.NavigationCommand
-import com.blez.dualnav.core.domain.repository.MessageRepository
 import com.blez.dualnav.ui.theme.DualNavTheme
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import org.koin.android.ext.android.inject
 
 /**
  * Hosts the floating widget in a [WindowManager] overlay so it stays visible while another app
  * (Google Maps) is in the foreground. A plain [Service] has no [LifecycleOwner]/[ViewModelStoreOwner]/
  * [SavedStateRegistryOwner] of its own — Compose requires all three to be attached to the view tree,
  * so this class provides minimal implementations itself rather than pulling in a whole Activity.
+ * Purely a presence indicator — tap to open the app, drag to move — no controls of its own.
  */
 class FloatingOverlayService :
     Service(),
     LifecycleOwner,
     ViewModelStoreOwner,
     SavedStateRegistryOwner {
-
-    private val messageRepository: MessageRepository by inject()
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
@@ -76,7 +66,6 @@ class FloatingOverlayService :
     override fun onDestroy() {
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         removeOverlayView()
-        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -102,10 +91,7 @@ class FloatingOverlayService :
             setContent {
                 DualNavTheme {
                     FloatingWidget(
-                        onStopClick = { sendCommand(NavigationCommand.Stop) },
-                        onResumeClick = { sendCommand(NavigationCommand.Resume) },
                         onOpenAppClick = { openApp() },
-                        onCloseClick = { stopSelf() },
                         onDrag = { delta -> moveBy(delta) }
                     )
                 }
@@ -119,10 +105,6 @@ class FloatingOverlayService :
         layoutParams.x += delta.x.toInt()
         layoutParams.y += delta.y.toInt()
         overlayView?.let { windowManager.updateViewLayout(it, layoutParams) }
-    }
-
-    private fun sendCommand(command: NavigationCommand) {
-        serviceScope.launch { messageRepository.sendCommand(command) }
     }
 
     private fun openApp() {

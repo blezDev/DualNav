@@ -3,8 +3,10 @@ package com.blez.dualnav.feature.control.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.blez.dualnav.R
+import com.blez.dualnav.core.domain.model.ConnectionStatus
 import com.blez.dualnav.core.domain.model.NavigationCommand
 import com.blez.dualnav.core.domain.repository.ConnectionRepository
+import com.blez.dualnav.core.domain.repository.DeviceRepository
 import com.blez.dualnav.core.domain.repository.MessageRepository
 import com.blez.dualnav.core.domain.util.onFailure
 import com.blez.dualnav.core.domain.util.onSuccess
@@ -15,6 +17,7 @@ import com.blez.dualnav.feature.control.domain.ParseMapsLinkUseCase
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -23,7 +26,8 @@ class ControlHomeViewModel(
     private val parseMapsLinkUseCase: ParseMapsLinkUseCase,
     private val parseCoordinatesUseCase: ParseCoordinatesUseCase,
     private val messageRepository: MessageRepository,
-    private val connectionRepository: ConnectionRepository
+    private val connectionRepository: ConnectionRepository,
+    private val deviceRepository: DeviceRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ControlHomeState())
@@ -38,14 +42,20 @@ class ControlHomeViewModel(
                 _state.update { it.copy(connectionStatus = status) }
             }
         }
+        viewModelScope.launch {
+            if (connectionRepository.getConnectionStatus().first() !is ConnectionStatus.Connected) {
+                connectionRepository.resumeConnection()
+            }
+        }
     }
 
     fun onAction(action: ControlHomeAction) {
         when (action) {
             is ControlHomeAction.OnMapsLinkChange -> _state.update { it.copy(mapsLink = action.value) }
+            is ControlHomeAction.OnTravelModeSelected -> _state.update { it.copy(travelMode = action.travelMode) }
             ControlHomeAction.OnSendMapsLinkClick -> sendMapsLink()
             ControlHomeAction.OnOpenManualEntryClick -> openManualDialog(ManualDialogMode.NAVIGATE)
-            ControlHomeAction.OnAddStopClick -> openManualDialog(ManualDialogMode.ADD_STOP)
+            ControlHomeAction.OnAddStopClick -> addStop()
             ControlHomeAction.OnDismissManualDialog -> _state.update { it.copy(showManualDialog = false) }
             is ControlHomeAction.OnManualLatitudeChange -> _state.update { it.copy(manualLatitude = action.value) }
             is ControlHomeAction.OnManualLongitudeChange -> _state.update { it.copy(manualLongitude = action.value) }
@@ -53,6 +63,23 @@ class ControlHomeViewModel(
             ControlHomeAction.OnManualConfirmClick -> confirmManualEntry()
             ControlHomeAction.OnStopClick -> sendSimpleCommand(NavigationCommand.Stop, R.string.control_home_stop_sent)
             ControlHomeAction.OnResumeClick -> sendSimpleCommand(NavigationCommand.Resume, R.string.control_home_resume_sent)
+            ControlHomeAction.OnBackPress -> _state.update { it.copy(showDisconnectConfirmation = true) }
+            ControlHomeAction.OnDisconnectCancelled -> _state.update {
+                it.copy(
+                    showDisconnectConfirmation = false
+                )
+            }
+
+            ControlHomeAction.OnDisconnectConfirmed -> disconnect()
+        }
+    }
+
+    private fun disconnect() {
+        viewModelScope.launch {
+            connectionRepository.disconnect()
+            deviceRepository.clearDeviceRole()
+            _state.update { it.copy(showDisconnectConfirmation = false) }
+            _events.send(ControlHomeEvent.NavigateToRoleSelection)
         }
     }
 
@@ -70,11 +97,45 @@ class ControlHomeViewModel(
 
     private fun sendMapsLink() {
         val link = _state.value.mapsLink
+        val travelMode = _state.value.travelMode
         viewModelScope.launch {
             _state.update { it.copy(isSendingLink = true) }
             parseMapsLinkUseCase(link)
                 .onSuccess { destination ->
-                    sendCommand(NavigationCommand.Navigate(destination), R.string.control_home_destination_sent)
+                    sendCommand(
+                        NavigationCommand.Navigate(destination, travelMode),
+                        R.string.control_home_destination_sent
+                    )
+                    _state.update { it.copy(isSendingLink = false) }
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(isSendingLink = false) }
+                    _events.send(ControlHomeEvent.ShowSnackbar(error.toUiText()))
+                }
+        }
+    }
+
+    /** Uses the pasted Maps link as the stop when one is present; otherwise falls back to the
+     * manual coordinate dialog, same as before links could be used for this. */
+    private fun addStop() {
+        val link = _state.value.mapsLink.trim()
+        if (link.isNotEmpty()) {
+            addStopFromLink(link)
+        } else {
+            openManualDialog(ManualDialogMode.ADD_STOP)
+        }
+    }
+
+    private fun addStopFromLink(link: String) {
+        val travelMode = _state.value.travelMode
+        viewModelScope.launch {
+            _state.update { it.copy(isSendingLink = true) }
+            parseMapsLinkUseCase(link)
+                .onSuccess { destination ->
+                    sendCommand(
+                        NavigationCommand.AddStop(destination, travelMode),
+                        R.string.control_home_stop_added
+                    )
                     _state.update { it.copy(isSendingLink = false) }
                 }
                 .onFailure { error ->
@@ -91,9 +152,9 @@ class ControlHomeViewModel(
             result
                 .onSuccess { destination ->
                     val command = if (current.manualDialogMode == ManualDialogMode.ADD_STOP) {
-                        NavigationCommand.AddStop(destination)
+                        NavigationCommand.AddStop(destination, current.travelMode)
                     } else {
-                        NavigationCommand.Navigate(destination)
+                        NavigationCommand.Navigate(destination, current.travelMode)
                     }
                     val confirmationRes = if (current.manualDialogMode == ManualDialogMode.ADD_STOP) {
                         R.string.control_home_stop_added

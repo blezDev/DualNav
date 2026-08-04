@@ -14,5 +14,6 @@ fun DataError.toUiText(): UiText = when (this) {
     DataError.Connection.DEVICE_NOT_FOUND -> UiText.StringResource(R.string.error_device_not_found)
     DataError.Connection.TIMEOUT -> UiText.StringResource(R.string.error_timeout)
     DataError.Connection.NOT_CONNECTED -> UiText.StringResource(R.string.error_not_connected)
+    DataError.Connection.PAIRING_REJECTED -> UiText.StringResource(R.string.error_pairing_rejected)
     DataError.Connection.UNKNOWN -> UiText.StringResource(R.string.error_unknown)
 }

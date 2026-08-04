@@ -1,67 +1,53 @@
 package com.blez.dualnav.feature.overlay.presentation
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.blez.dualnav.R
 import com.blez.dualnav.ui.theme.DualNavTheme
 
+/**
+ * A small persistent bubble, not a control panel — it exists only to show DualNav is still
+ * running while another app (Google Maps) is in the foreground. Tap opens the app; drag moves it.
+ */
 @Composable
 fun FloatingWidget(
-    onStopClick: () -> Unit,
-    onResumeClick: () -> Unit,
     onOpenAppClick: () -> Unit,
-    onCloseClick: () -> Unit,
     onDrag: (Offset) -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface,
         shadowElevation = 8.dp,
-        modifier = Modifier.pointerInput(Unit) {
-            detectDragGestures { change, dragAmount ->
-                change.consume()
-                onDrag(dragAmount)
+        modifier = Modifier
+            .size(56.dp)
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount)
+                }
             }
-        }
     ) {
-        Row(
-            modifier = Modifier.padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(0.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onStopClick) {
-                Icon(imageVector = Icons.Filled.Stop, contentDescription = stringResource(R.string.control_home_stop))
-            }
-            IconButton(onClick = onResumeClick) {
-                Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = stringResource(R.string.control_home_resume))
-            }
-            IconButton(onClick = onOpenAppClick) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.OpenInNew, contentDescription = stringResource(R.string.cd_open_app))
-            }
-            IconButton(onClick = onCloseClick) {
-                Icon(imageVector = Icons.Filled.Close, contentDescription = stringResource(R.string.cd_close_overlay))
-            }
-        }
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = stringResource(R.string.cd_open_app),
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onOpenAppClick)
+        )
     }
 }
 
@@ -69,13 +55,7 @@ fun FloatingWidget(
 @Composable
 private fun FloatingWidgetPreview() {
     DualNavTheme {
-        FloatingWidget(
-            onStopClick = {},
-            onResumeClick = {},
-            onOpenAppClick = {},
-            onCloseClick = {},
-            onDrag = {}
-        )
+        FloatingWidget(onOpenAppClick = {}, onDrag = {})
     }
 }
 
@@ -83,12 +63,6 @@ private fun FloatingWidgetPreview() {
 @Composable
 private fun FloatingWidgetDarkPreview() {
     DualNavTheme {
-        FloatingWidget(
-            onStopClick = {},
-            onResumeClick = {},
-            onOpenAppClick = {},
-            onCloseClick = {},
-            onDrag = {}
-        )
+        FloatingWidget(onOpenAppClick = {}, onDrag = {})
     }
 }

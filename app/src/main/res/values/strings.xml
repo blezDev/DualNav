@@ -8,10 +8,16 @@
     <string name="settings_theme_default_description">Clean Material look, follows your system\'s dynamic color</string>
     <string name="settings_theme_bleach">Bleach</string>
     <string name="settings_theme_bleach_description">Soul Reaper black, crimson, and bone — an anime-inspired look</string>
-    <string name="settings_device_label">Device</string>
-    <string name="settings_change_role">Change role</string>
-    <string name="settings_change_role_description">Switch this phone between Control and Companion</string>
+    <string name="settings_connection_label">Connection</string>
+    <string name="settings_disconnect">Disconnect</string>
+    <string name="settings_disconnect_description">Disconnect from the other phone and return to role selection</string>
     <string name="cd_settings">Settings</string>
+
+    <!-- Disconnect confirmation (Settings and both home screens' back press) -->
+    <string name="disconnect_confirm_title">Disconnect?</string>
+    <string name="disconnect_confirm_message">This will disconnect from the other phone and return to role selection.</string>
+    <string name="disconnect_confirm_yes">Disconnect</string>
+    <string name="disconnect_confirm_no">Cancel</string>
 
     <!-- Errors -->
     <string name="error_disk_full">Storage is full</string>
@@ -24,6 +30,7 @@
     <string name="error_device_not_found">Device not found</string>
     <string name="error_timeout">Connection timed out</string>
     <string name="error_not_connected">Not connected to a device</string>
+    <string name="error_pairing_rejected">The other phone declined the pairing request</string>
     <string name="error_invalid_maps_link">That doesn\'t look like a valid Maps link</string>
     <string name="error_maps_link_unreachable">Couldn\'t open that link. Check your internet connection.</string>
     <string name="error_invalid_number">Enter a valid number</string>
@@ -38,10 +45,33 @@
     <string name="role_companion_title">Companion phone</string>
     <string name="role_companion_description">Receives destinations and opens navigation</string>
     <string name="role_selection_continue">Continue</string>
+    <string name="exit_app_title">Exit DualNav?</string>
+    <string name="exit_app_message">Are you sure you want to close the application?</string>
+    <string name="exit_app_confirm">Exit</string>
+    <string name="exit_app_cancel">Cancel</string>
 
     <!-- Connection setup -->
     <string name="connection_setup_title">Connect the two phones</string>
     <string name="cd_change_role">Change role</string>
+    <string name="connection_setup_back_confirm_title">Go back to role selection?</string>
+    <string name="connection_setup_back_confirm_message">This will disconnect and clear the current connection setup.</string>
+    <string name="connection_setup_back_confirm_yes">Yes</string>
+    <string name="connection_setup_back_confirm_no">No</string>
+    <string name="wifi_disabled_title">Wi-Fi is off</string>
+    <string name="wifi_disabled_message">Wi-Fi needs to be turned on to connect over the local network.</string>
+    <string name="wifi_disabled_enable">Enable</string>
+    <string name="wifi_disabled_cancel">Cancel</string>
+    <string name="bluetooth_disabled_title">Bluetooth is off</string>
+    <string name="bluetooth_disabled_message">Bluetooth needs to be turned on to connect to the other phone.</string>
+    <string name="bluetooth_disabled_enable">Enable</string>
+    <string name="bluetooth_disabled_cancel">Cancel</string>
+    <string name="connection_setup_companion_waiting">Waiting for the control phone to connect…</string>
+    <string name="pairing_waiting_title">Pairing with \'%1$s\'</string>
+    <string name="pairing_waiting_message">Confirm this PIN matches the one shown on the other phone.</string>
+    <string name="pairing_waiting_cancel">Cancel</string>
+    <string name="pairing_request_title">Pair with \'%1$s\'?</string>
+    <string name="pairing_request_message">Confirm this PIN matches the one shown on the other phone.</string>
+    <string name="pairing_request_accept">Continue</string>
     <string name="connection_type_bluetooth">Bluetooth</string>
     <string name="connection_type_wifi">Wi-Fi</string>
     <string name="connection_type_firebase">Cloud relay</string>
@@ -60,6 +90,8 @@
     <string name="control_home_maps_link_label">Paste a Google Maps link</string>
     <string name="control_home_maps_link_placeholder">https://maps.app.goo.gl/…</string>
     <string name="control_home_send_destination">Send destination</string>
+    <string name="control_home_travel_mode_car">Car</string>
+    <string name="control_home_travel_mode_two_wheeler">Two-wheeler</string>
     <string name="control_home_manual_entry">Enter coordinates manually</string>
     <string name="control_home_stop">Stop</string>
     <string name="control_home_resume">Resume</string>
@@ -69,15 +101,22 @@
     <string name="control_home_stop_sent">Stop sent</string>
     <string name="control_home_resume_sent">Resume sent</string>
     <string name="control_home_stop_added">Stop added</string>
-    <string name="control_home_enable_floating_widget">Enable floating widget</string>
-    <string name="control_home_disable_floating_widget">Disable floating widget</string>
-    <string name="control_home_overlay_permission_needed">Allow DualNav to display over other apps, then try again</string>
 
     <!-- Floating overlay -->
     <string name="overlay_notification_channel">Floating widget</string>
     <string name="overlay_notification_title">DualNav floating widget is active</string>
     <string name="cd_open_app">Open DualNav</string>
-    <string name="cd_close_overlay">Close floating widget</string>
+    <string name="overlay_permission_title">Show over other apps?</string>
+    <string name="overlay_permission_message">Allow DualNav to display over other apps so you can see it\'s still running while Google Maps is open.</string>
+    <string name="overlay_permission_enable">Open settings</string>
+    <string name="overlay_permission_cancel">Not now</string>
+
+    <!-- Maps control accessibility -->
+    <string name="maps_control_accessibility_description">Lets DualNav stop Google Maps turn-by-turn navigation when the control phone sends a Stop or Add stop command.</string>
+    <string name="accessibility_permission_title">Enable navigation control?</string>
+    <string name="accessibility_permission_message">DualNav needs Accessibility access to stop Google Maps navigation when the control phone asks. Without it, you\'ll need to stop navigation yourself.</string>
+    <string name="accessibility_permission_enable">Open settings</string>
+    <string name="accessibility_permission_cancel">Not now</string>
 
     <!-- Manual coordinate dialog -->
     <string name="manual_coordinate_dialog_title">Enter coordinates</string>
@@ -106,5 +145,7 @@
     <string name="companion_alert_navigate">Navigating to %1$s</string>
     <string name="companion_alert_add_stop">New stop added: %1$s</string>
     <string name="companion_alert_stop">The control phone asked you to stop — please stop navigation manually</string>
+    <string name="companion_alert_stop_auto">Navigation stopped</string>
     <string name="companion_alert_resume">The control phone asked you to resume — please resume navigation manually</string>
+    <string name="companion_alert_resume_auto">Resuming navigation…</string>
 </resources>
