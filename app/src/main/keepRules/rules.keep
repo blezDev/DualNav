@@ -10,3 +10,16 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+
+# kotlinx-serialization already ships its own consumer R8 rules (verified in
+# app/build/outputs/mapping/*/configuration.txt) that keep $$serializer classes and the
+# serializer() lookup for every @Serializable type in this app — no extra rules needed here.
+
+# Firebase Realtime Database is only ever read/written here as primitives (String/Boolean/Long)
+# and plain Map<String, Any> payloads, via DataSnapshot#getValue(Class) — never bean-mapped into
+# our own data classes — so no custom Firebase model keep rules are needed either.
+
+# AccessibilityService, Services, and the FileProvider are declared in AndroidManifest.xml and
+# are already kept automatically by the default Android R8 rules (every manifest-declared
+# component is kept), so nothing app-specific is required for the update-installer or
+# accessibility-bridge flows.

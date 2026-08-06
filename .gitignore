@@ -13,4 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
-TODO.md
+
+# Release signing key — lives in a separate private repo, never here.
+keystore.properties
+*.jks
+*.keystore

@@ -17,4 +17,7 @@ fun DataError.toUiText(): UiText = when (this) {
     DataError.Connection.PAIRING_REJECTED -> UiText.StringResource(R.string.error_pairing_rejected)
     DataError.Connection.SESSION_ENDED -> UiText.StringResource(R.string.error_session_ended)
     DataError.Connection.UNKNOWN -> UiText.StringResource(R.string.error_unknown)
+    DataError.Remote.NETWORK_ERROR -> UiText.StringResource(R.string.error_network_unavailable)
+    DataError.Remote.NOT_FOUND -> UiText.StringResource(R.string.error_not_found)
+    DataError.Remote.UNKNOWN -> UiText.StringResource(R.string.error_unknown)
 }

@@ -37,7 +37,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
@@ -69,9 +68,10 @@ class MultiTransportConnectionRepository(
     /** Firebase's raw `.info/connected` only means "this phone is online" - true the instant
      * Cloud Relay is selected, well before any pairing code exists. Gates [rawConnectionStatus]
      * so Connected isn't reported (and Continue/auto-navigate don't fire) until a channel is
-     * actually established on both sides. */
-    @Volatile
-    private var firebaseChannelReady = false
+     * actually established on both sides. A StateFlow, not a plain var - [rawConnectionStatus]'s
+     * FIREBASE branch has to be able to react to this flipping true on its own, since Firebase's
+     * own `.info/connected` stream typically doesn't emit again once it's settled at Connected. */
+    private val firebaseChannelReady = MutableStateFlow(false)
 
     init {
         watchForUnexpectedDisconnects()
@@ -275,7 +275,7 @@ class MultiTransportConnectionRepository(
         deviceRepository.savePairedDevice(info)
         deviceRepository.setConnectionEstablished(true)
         syncSessionActive(companionUid)
-        firebaseChannelReady = true
+        firebaseChannelReady.value = true
         _pairingState.value = PairingState.Idle
     }
 
@@ -299,7 +299,7 @@ class MultiTransportConnectionRepository(
                 )
                 deviceRepository.setConnectionEstablished(true)
                 repositoryScope.launch { syncSessionActive(controlUid) }
-                firebaseChannelReady = true
+                firebaseChannelReady.value = true
                 Result.Success(Unit)
             }
         }
@@ -341,7 +341,7 @@ class MultiTransportConnectionRepository(
         isManualDisconnect = true
         relayPeerWaitJob?.cancel()
         relayPeerWaitJob = null
-        firebaseChannelReady = false
+        firebaseChannelReady.value = false
         deviceRepository.setConnectionEstablished(false)
         return when (preferencesDataSource.getConnectionType().first()) {
             ConnectionType.BLUETOOTH -> bluetoothDataSource.disconnect()
@@ -430,8 +430,11 @@ class MultiTransportConnectionRepository(
             when (connectionType) {
                 ConnectionType.BLUETOOTH -> bluetoothDataSource.getConnectionStatus()
                 ConnectionType.WIFI -> wifiDataSource.getConnectionStatus()
-                ConnectionType.FIREBASE -> firebaseDataSource.getConnectionStatus().map { status ->
-                    if (status is ConnectionStatus.Connected && !firebaseChannelReady) {
+                ConnectionType.FIREBASE -> combine(
+                    firebaseDataSource.getConnectionStatus(),
+                    firebaseChannelReady
+                ) { status, channelReady ->
+                    if (status is ConnectionStatus.Connected && !channelReady) {
                         ConnectionStatus.Reconnecting
                     } else {
                         status
@@ -683,7 +686,7 @@ class MultiTransportConnectionRepository(
             }
             null -> connectResult
         }
-        if (result is Result.Success) firebaseChannelReady = true
+        if (result is Result.Success) firebaseChannelReady.value = true
         return result
     }
 

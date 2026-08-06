@@ -19,4 +19,10 @@ sealed interface DataError : Error {
         SESSION_ENDED,
         UNKNOWN
     }
+
+    enum class Remote : DataError {
+        NETWORK_ERROR,
+        NOT_FOUND,
+        UNKNOWN
+    }
 }

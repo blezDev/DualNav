@@ -6,6 +6,7 @@ import com.blez.dualnav.di.companionModule
 import com.blez.dualnav.di.connectionModule
 import com.blez.dualnav.di.coreDataModule
 import com.blez.dualnav.di.presentationModule
+import com.blez.dualnav.di.updateModule
 import com.blez.dualnav.di.useCaseModule
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
@@ -18,7 +19,15 @@ class App : Application() {
         startKoin {
             androidLogger(if (BuildConfig.DEBUG) Level.DEBUG else Level.NONE)
             androidContext(this@App)
-            modules(appModule, coreDataModule, connectionModule, useCaseModule, companionModule, presentationModule)
+            modules(
+                appModule,
+                coreDataModule,
+                connectionModule,
+                useCaseModule,
+                companionModule,
+                updateModule,
+                presentationModule
+            )
         }
     }
 }

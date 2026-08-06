@@ -44,6 +44,18 @@
     <string name="error_invalid_number">Enter a valid number</string>
     <string name="error_invalid_latitude">Latitude must be between -90 and 90</string>
     <string name="error_invalid_longitude">Longitude must be between -180 and 180</string>
+    <string name="error_network_unavailable">Couldn\'t reach GitHub. Check your internet connection.</string>
+    <string name="settings_update_download_notification_description">Downloading the new DualNav version</string>
+    <string name="settings_update_grant_install_permission">Allow DualNav to install updates, then try again</string>
+    <string name="settings_update_up_to_date">You\'re up to date</string>
+    <string name="settings_updates_label">Updates</string>
+    <string name="settings_check_for_update">Check for updates</string>
+    <string name="settings_update_available_title">Update available: v%1$s</string>
+    <string name="settings_update_download">Download &amp; install</string>
+    <string name="settings_update_open_release_page">View on GitHub</string>
+    <string name="settings_update_later">Later</string>
+    <string name="settings_update_downloading_title">Downloading update</string>
+    <string name="settings_update_downloading_message">DualNav will open the installer once the download finishes.</string>
 
     <!-- Role selection -->
     <string name="role_selection_title">Set up this phone</string>
