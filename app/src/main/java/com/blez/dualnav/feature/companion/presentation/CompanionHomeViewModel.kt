@@ -6,6 +6,9 @@ import com.blez.dualnav.core.domain.model.ConnectionStatus
 import com.blez.dualnav.core.domain.repository.ConnectionRepository
 import com.blez.dualnav.core.domain.repository.DeviceRepository
 import com.blez.dualnav.core.domain.repository.MessageRepository
+import com.blez.dualnav.core.domain.util.DataError
+import com.blez.dualnav.core.domain.util.onFailure
+import com.blez.dualnav.core.presentation.util.toUiText
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,7 +44,12 @@ class CompanionHomeViewModel(
         }
         viewModelScope.launch {
             if (connectionRepository.getConnectionStatus().first() !is ConnectionStatus.Connected) {
-                connectionRepository.resumeConnection()
+                attemptReconnect()
+            }
+        }
+        viewModelScope.launch {
+            connectionRepository.observeRemoteSessionEnded().collect {
+                _state.update { it.copy(showRemoteDisconnectedDialog = true) }
             }
         }
     }
@@ -49,6 +57,7 @@ class CompanionHomeViewModel(
     fun onAction(action: CompanionHomeAction) {
         when (action) {
             CompanionHomeAction.OnBackPress -> _state.update { it.copy(showDisconnectConfirmation = true) }
+            CompanionHomeAction.OnReconnectClick -> viewModelScope.launch { attemptReconnect() }
             CompanionHomeAction.OnDisconnectCancelled -> _state.update {
                 it.copy(
                     showDisconnectConfirmation = false
@@ -56,7 +65,31 @@ class CompanionHomeViewModel(
             }
 
             CompanionHomeAction.OnDisconnectConfirmed -> disconnect()
+            CompanionHomeAction.OnRemoteDisconnectedAcknowledged -> acknowledgeRemoteDisconnect()
         }
+    }
+
+    private fun acknowledgeRemoteDisconnect() {
+        viewModelScope.launch {
+            connectionRepository.acknowledgeRemoteDisconnect()
+            deviceRepository.clearDeviceRole()
+            _state.update { it.copy(showRemoteDisconnectedDialog = false) }
+            _events.send(CompanionHomeEvent.NavigateToRoleSelection)
+        }
+    }
+
+    private suspend fun attemptReconnect() {
+        _state.update { it.copy(isReconnecting = true) }
+        connectionRepository.resumeConnection()
+            .onFailure { error ->
+                if (error == DataError.Connection.SESSION_ENDED) {
+                    deviceRepository.clearDeviceRole()
+                    _events.send(CompanionHomeEvent.NavigateToRoleSelection)
+                } else {
+                    _events.send(CompanionHomeEvent.ShowSnackbar(error.toUiText()))
+                }
+            }
+        _state.update { it.copy(isReconnecting = false) }
     }
 
     private fun disconnect() {

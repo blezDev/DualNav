@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     implementation(platform(libs.koin.bom))
+    implementation(libs.firebase.database)
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
 

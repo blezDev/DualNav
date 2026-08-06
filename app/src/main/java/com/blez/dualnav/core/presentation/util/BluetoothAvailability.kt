@@ -21,9 +21,16 @@ object BluetoothAvailability {
         }
     }
 
+    /** BLUETOOTH_ADVERTISE is only actually used by Companion (to request discoverable mode so
+     * Control's scan can find it) - requested for Control too since an unused grant is harmless
+     * and it keeps this permission set role-agnostic. */
     fun requiredPermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+            arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_ADVERTISE
+            )
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }

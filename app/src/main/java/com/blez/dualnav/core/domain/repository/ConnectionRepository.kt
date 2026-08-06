@@ -29,4 +29,15 @@ interface ConnectionRepository {
     /** Re-establishes the transport using the persisted role/connection type/paired device, for
      * when the app lands directly on a home screen (no live socket survives process death). */
     suspend fun resumeConnection(): EmptyResult<DataError>
+
+    /** Emits once whenever the *other* phone explicitly ends the shared session (e.g. Control
+     * disconnects from Settings) while this device is paired — driven by a live Firebase listener
+     * so the UI can notify the user immediately, rather than waiting for the transport socket to
+     * notice the drop. */
+    fun observeRemoteSessionEnded(): Flow<Unit>
+
+    /** Tears down the local transport after this device learns (via [observeRemoteSessionEnded])
+     * that the other phone already recorded the session as ended — unlike [disconnect], this
+     * doesn't re-write the shared Firebase record, since the peer's record is already authoritative. */
+    suspend fun acknowledgeRemoteDisconnect(): EmptyResult<DataError>
 }

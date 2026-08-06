@@ -52,6 +52,22 @@ class ConnectionSetupViewModel(
                 _state.update { it.copy(pairingState = pairingState) }
             }
         }
+        viewModelScope.launch {
+            // Unlike WiFi's PIN handshake (which explicitly accepts and navigates in
+            // respondToPairingRequest) or Control (which navigates right after initiatePairing
+            // succeeds), Bluetooth's Companion side has no explicit "accept" step - the socket
+            // just connects silently in the background once Control dials in - so it needs to
+            // advance on its own instead of waiting on a manual Continue tap.
+            connectionRepository.getConnectionStatus().collect { status ->
+                val current = _state.value
+                if (status is ConnectionStatus.Connected &&
+                    current.role == AppRole.COMPANION &&
+                    current.selectedType == ConnectionType.BLUETOOTH
+                ) {
+                    _events.send(ConnectionSetupEvent.NavigateNext(AppRole.COMPANION))
+                }
+            }
+        }
     }
 
     fun onAction(action: ConnectionSetupAction) {

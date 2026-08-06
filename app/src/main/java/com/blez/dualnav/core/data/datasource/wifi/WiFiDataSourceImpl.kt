@@ -1,11 +1,10 @@
 package com.blez.dualnav.core.data.datasource.wifi
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
-import android.provider.Settings
+import com.blez.dualnav.core.data.datasource.PreferencesDataSource
 import com.blez.dualnav.core.data.datasource.WiFiDataSource
 import com.blez.dualnav.core.domain.model.AppRole
 import com.blez.dualnav.core.domain.model.ConnectionStatus
@@ -24,6 +23,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -39,6 +39,7 @@ import java.net.Socket
  */
 class WiFiDataSourceImpl(
     private val context: Context,
+    private val preferencesDataSource: PreferencesDataSource,
     private val logger: Logger
 ) : WiFiDataSource {
 
@@ -61,7 +62,7 @@ class WiFiDataSourceImpl(
     override suspend fun connect(): EmptyResult<DataError.Connection> {
         return try {
             withContext(Dispatchers.IO) { startAcceptLoop() }
-            registerService()
+            registerService(preferencesDataSource.getDeviceInfo().first()?.deviceId)
             Result.Success(Unit)
         } catch (e: IOException) {
             Result.Error(DataError.Connection.WIFI_UNAVAILABLE)
@@ -132,12 +133,13 @@ class WiFiDataSourceImpl(
         }
     }
 
-    private fun registerService() {
+    private fun registerService(stableId: String?) {
         val requestedName = localDeviceName()
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = requestedName
             serviceType = WiFiConstants.SERVICE_TYPE
             port = WiFiConstants.PORT
+            if (stableId != null) setAttribute(WiFiConstants.STABLE_ID_ATTRIBUTE, stableId)
         }
         val listener = object : NsdManager.RegistrationListener {
             // NSD may rename us on registration (e.g. "(2)" suffix) if our requested name collides
@@ -189,7 +191,10 @@ class WiFiDataSourceImpl(
                         role = AppRole.COMPANION,
                         connectionType = ConnectionType.WIFI,
                         lastSeen = System.currentTimeMillis(),
-                        isConnected = false
+                        isConnected = false,
+                        stableId = info.attributes[WiFiConstants.STABLE_ID_ATTRIBUTE]?.toString(
+                            Charsets.UTF_8
+                        )
                     )
                 )
             }
@@ -221,13 +226,14 @@ class WiFiDataSourceImpl(
         }
     }
 
-    @SuppressLint("HardwareIds")
-    private fun localDeviceName(): String {
-        val androidId =
-            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-        val suffix = androidId?.takeLast(4) ?: System.currentTimeMillis().toString().takeLast(4)
-        return "${Build.MODEL}-$suffix"
-    }
+    /**
+     * Must match the self-identity name persisted by [com.blez.dualnav.core.domain.usecase.EnsureLocalDeviceIdentityUseCase]
+     * (also just [Build.MODEL]) — that's the name sent in the pairing handshake and persisted as
+     * the peer's [com.blez.dualnav.core.domain.model.DeviceInfo.deviceName], and reconnecting
+     * after a stale IP re-matches the peer by that same name via a fresh NSD scan. A per-device
+     * suffix here would make that match impossible.
+     */
+    private fun localDeviceName(): String = Build.MODEL
 
     private fun String.parseHostPort(): Pair<String, Int>? {
         val parts = split(":")

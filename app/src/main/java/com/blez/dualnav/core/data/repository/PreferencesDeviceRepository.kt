@@ -48,11 +48,17 @@ class PreferencesDeviceRepository(
         }
     }
 
+    /**
+     * Replaces the entire stored list rather than upserting by [DeviceInfo.deviceId] - the app
+     * only ever has one active pairing at a time, but `deviceId`'s format differs per transport
+     * (WiFi host:port, Bluetooth MAC, Firebase's own id), so a dedup keyed on it would never match
+     * across a transport switch and would leave a stale entry from a previous
+     * transport/session behind. [getPairedDevice] picking that up instead of the current one is
+     * exactly how a WiFi-era `host:port` ended up being passed to Bluetooth's `pairDevice`.
+     */
     override suspend fun savePairedDevice(device: DeviceInfo): EmptyResult<DataError.Local> {
         return try {
-            val current = preferencesDataSource.getPairedDevices().first()
-            val updated = current.filterNot { it.deviceId == device.deviceId } + device
-            preferencesDataSource.savePairedDevices(updated)
+            preferencesDataSource.savePairedDevices(listOf(device))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

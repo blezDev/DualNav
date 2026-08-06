@@ -83,12 +83,23 @@ class BluetoothDataSourceImpl(
     }
 
     override suspend fun discoverDevices(): Result<List<DeviceInfo>, DataError.Connection> {
-        val bluetoothAdapter = adapter ?: return Result.Error(DataError.Connection.BLUETOOTH_UNAVAILABLE)
-        if (!hasScanPermission() || !hasConnectPermission()) return Result.Error(DataError.Connection.PERMISSION_DENIED)
+        val bluetoothAdapter = adapter
+        if (bluetoothAdapter == null) {
+            logger.warn("discoverDevices: no BluetoothAdapter available")
+            return Result.Error(DataError.Connection.BLUETOOTH_UNAVAILABLE)
+        }
+        if (!hasScanPermission() || !hasConnectPermission()) {
+            logger.warn("discoverDevices: missing permission (scan=${hasScanPermission()}, connect=${hasConnectPermission()})")
+            return Result.Error(DataError.Connection.PERMISSION_DENIED)
+        }
 
         val bonded = bondedDevices(bluetoothAdapter)
+        logger.info("discoverDevices: ${bonded.size} bonded device(s): ${bonded.map { it.deviceName }}")
         val nearby = discoverNearbyDevices(bluetoothAdapter)
-        return Result.Success((bonded + nearby).distinctBy { it.deviceId })
+        logger.info("discoverDevices: ${nearby.size} freshly-scanned device(s): ${nearby.map { it.deviceName }}")
+        val result = (bonded + nearby).distinctBy { it.deviceId }
+        logger.info("discoverDevices: returning ${result.size} device(s) total")
+        return Result.Success(result)
     }
 
     override suspend fun pairDevice(deviceAddress: String): EmptyResult<DataError.Connection> {
@@ -109,6 +120,11 @@ class BluetoothDataSourceImpl(
             Result.Error(DataError.Connection.DEVICE_NOT_FOUND)
         } catch (e: SecurityException) {
             Result.Error(DataError.Connection.PERMISSION_DENIED)
+        } catch (e: IllegalArgumentException) {
+            // getRemoteDevice() throws this for anything that isn't a valid MAC address, e.g. a
+            // stale non-Bluetooth id from a previous transport's pairing.
+            logger.warn("pairDevice: '$deviceAddress' is not a valid Bluetooth address", e)
+            Result.Error(DataError.Connection.DEVICE_NOT_FOUND)
         }
     }
 
@@ -183,9 +199,12 @@ class BluetoothDataSourceImpl(
                 override fun onReceive(receiverContext: Context, intent: Intent) {
                     when (intent.action) {
                         BluetoothDevice.ACTION_FOUND -> {
-                            intent.bluetoothDeviceExtra()?.let { found += it.toDeviceInfo(isConnected = false) }
+                            val device = intent.bluetoothDeviceExtra()
+                            logger.info("discoverNearbyDevices: ACTION_FOUND ${device?.name} / ${device?.address}")
+                            device?.let { found += it.toDeviceInfo(isConnected = false) }
                         }
                         BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                            logger.info("discoverNearbyDevices: discovery finished, found ${found.size} device(s)")
                             runCatching { context.unregisterReceiver(this) }
                             if (continuation.isActive) continuation.resume(found.distinctBy { it.deviceId })
                         }
@@ -196,8 +215,21 @@ class BluetoothDataSourceImpl(
                 addAction(BluetoothDevice.ACTION_FOUND)
                 addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
             }
-            ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-            bluetoothAdapter.startDiscoverySafely()
+            // Both actions are OS-protected broadcasts (only the system can ever send them), so
+            // EXPORTED can't be spoofed by another app here - some OEM builds have been observed
+            // to simply never deliver these to a NOT_EXPORTED dynamically-registered receiver.
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            val started = bluetoothAdapter.startDiscoverySafely()
+            logger.info("discoverNearbyDevices: startDiscovery() returned $started")
+            if (!started) {
+                runCatching { context.unregisterReceiver(receiver) }
+                if (continuation.isActive) continuation.resume(emptyList())
+            }
 
             continuation.invokeOnCancellation {
                 runCatching { context.unregisterReceiver(receiver) }

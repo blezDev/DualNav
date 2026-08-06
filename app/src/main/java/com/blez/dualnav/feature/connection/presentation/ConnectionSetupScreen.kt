@@ -1,5 +1,7 @@
 package com.blez.dualnav.feature.connection.presentation
 
+import android.bluetooth.BluetoothAdapter
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,12 +12,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -23,7 +27,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -54,7 +57,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.size
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.blez.dualnav.R
 import com.blez.dualnav.core.domain.model.AppRole
@@ -71,6 +73,8 @@ import com.blez.dualnav.ui.theme.DualNavTheme
 import com.blez.dualnav.ui.theme.LocalIsBleachTheme
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
+
+private const val BLUETOOTH_DISCOVERABLE_DURATION_SECONDS = 300
 
 @Composable
 fun ConnectionSetupRoot(
@@ -130,11 +134,36 @@ fun ConnectionSetupScreen(
     var showWifiDisabledDialog by remember { mutableStateOf(false) }
     var showBluetoothDisabledDialog by remember { mutableStateOf(false) }
 
+    val discoverableLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        // Whether the user approved or dismissed the discoverable prompt, Companion can still
+        // proceed - it'll just have to be paired via already-bonded devices if they said no.
+        onAction(ConnectionSetupAction.OnConnectionTypeSelected(ConnectionType.BLUETOOTH))
+    }
+
+    fun requestBluetoothType() {
+        if (state.role == AppRole.COMPANION) {
+            // A running RFCOMM server socket alone doesn't make this phone visible to Control's
+            // scan - classic Bluetooth discovery only finds devices that are either already
+            // OS-bonded or explicitly put into discoverable mode, which requires this prompt.
+            discoverableLauncher.launch(
+                Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
+                    .putExtra(
+                        BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,
+                        BLUETOOTH_DISCOVERABLE_DURATION_SECONDS
+                    )
+            )
+        } else {
+            onAction(ConnectionSetupAction.OnConnectionTypeSelected(ConnectionType.BLUETOOTH))
+        }
+    }
+
     val bluetoothEnableLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (BluetoothAvailability.isEnabled(context)) {
-            onAction(ConnectionSetupAction.OnConnectionTypeSelected(ConnectionType.BLUETOOTH))
+            requestBluetoothType()
         }
     }
     val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
@@ -142,7 +171,7 @@ fun ConnectionSetupScreen(
     ) { grants ->
         if (grants.values.all { it }) {
             if (BluetoothAvailability.isEnabled(context)) {
-                onAction(ConnectionSetupAction.OnConnectionTypeSelected(ConnectionType.BLUETOOTH))
+                requestBluetoothType()
             } else {
                 showBluetoothDisabledDialog = true
             }
@@ -165,7 +194,7 @@ fun ConnectionSetupScreen(
                 } else if (!BluetoothAvailability.isEnabled(context)) {
                     showBluetoothDisabledDialog = true
                 } else {
-                    onAction(ConnectionSetupAction.OnConnectionTypeSelected(type))
+                    requestBluetoothType()
                 }
             }
 

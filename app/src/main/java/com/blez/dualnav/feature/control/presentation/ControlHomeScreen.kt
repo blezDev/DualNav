@@ -12,8 +12,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -128,6 +128,16 @@ fun ControlHomeScreen(
         ) {
             ConnectionStatusRow(state.connectionStatus)
 
+            if (state.connectionStatus !is ConnectionStatus.Connected) {
+                OutlinedButton(
+                    onClick = { onAction(ControlHomeAction.OnReconnectClick) },
+                    enabled = !state.isReconnecting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.control_home_reconnect))
+                }
+            }
+
             OutlinedTextField(
                 value = state.mapsLink,
                 onValueChange = { onAction(ControlHomeAction.OnMapsLinkChange(it)) },
@@ -210,6 +220,19 @@ fun ControlHomeScreen(
             dismissText = stringResource(R.string.disconnect_confirm_no),
             onConfirm = { onAction(ControlHomeAction.OnDisconnectConfirmed) },
             onDismiss = { onAction(ControlHomeAction.OnDisconnectCancelled) }
+        )
+    }
+
+    if (state.showRemoteDisconnectedDialog) {
+        AlertDialog(
+            onDismissRequest = { onAction(ControlHomeAction.OnRemoteDisconnectedAcknowledged) },
+            title = { Text(stringResource(R.string.remote_disconnected_companion_title)) },
+            text = { Text(stringResource(R.string.remote_disconnected_companion_message)) },
+            confirmButton = {
+                TextButton(onClick = { onAction(ControlHomeAction.OnRemoteDisconnectedAcknowledged) }) {
+                    Text(stringResource(R.string.remote_disconnected_ok))
+                }
+            }
         )
     }
 }
@@ -313,9 +336,27 @@ private fun ManualCoordinateDialog(
 ) {
     AlertDialog(
         onDismissRequest = { onAction(ControlHomeAction.OnDismissManualDialog) },
-        title = { Text(stringResource(R.string.manual_coordinate_dialog_title)) },
+        title = {
+            Text(
+                stringResource(
+                    if (state.manualDialogMode == ManualDialogMode.ADD_STOP) {
+                        R.string.manual_coordinate_dialog_title_add_stop
+                    } else {
+                        R.string.manual_coordinate_dialog_title
+                    }
+                )
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = state.manualMapsLink,
+                    onValueChange = { onAction(ControlHomeAction.OnManualMapsLinkChange(it)) },
+                    label = { Text(stringResource(R.string.manual_coordinate_maps_link_label)) },
+                    placeholder = { Text(stringResource(R.string.control_home_maps_link_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 OutlinedTextField(
                     value = state.manualLatitude,
                     onValueChange = { onAction(ControlHomeAction.OnManualLatitudeChange(it)) },
@@ -339,7 +380,10 @@ private fun ManualCoordinateDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onAction(ControlHomeAction.OnManualConfirmClick) }) {
+            TextButton(
+                onClick = { onAction(ControlHomeAction.OnManualConfirmClick) },
+                enabled = !state.isSendingLink
+            ) {
                 Text(stringResource(R.string.manual_coordinate_confirm))
             }
         },

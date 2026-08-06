@@ -22,6 +22,13 @@ data class PairingRequestPayload(val deviceName: String, val pin: String)
 /** An incoming pairing request, with the sender's stable device id pulled from the envelope. */
 data class PairingRequest(val senderId: String, val deviceName: String, val pin: String)
 
+@Serializable
+data class HelloPayload(val deviceName: String)
+
+/** A peer announcing its stable identity over an already-connected socket (Bluetooth has no PIN
+ * handshake like WiFi's, so this is how each side otherwise learns the other's persistent id). */
+data class Hello(val senderId: String, val deviceName: String)
+
 /**
  * Wraps/unwraps the string each transport's `sendMessage(String)`/`receiveMessage(): Flow<String>`
  * actually carries. Kept separate from the per-transport data sources since every transport
@@ -32,6 +39,7 @@ object MessageProtocol {
     private const val TYPE_PAIR_REQUEST = "PAIR_REQUEST"
     private const val TYPE_PAIR_ACCEPT = "PAIR_ACCEPT"
     private const val TYPE_PAIR_REJECT = "PAIR_REJECT"
+    private const val TYPE_HELLO = "HELLO"
 
     fun wrapCommand(command: NavigationCommand, senderId: String, receiverId: String, json: Json): String {
         val envelope = MessageEnvelope(
@@ -58,7 +66,8 @@ object MessageProtocol {
         val envelope = runCatching { json.decodeFromString(MessageEnvelope.serializer(), raw) }.getOrNull()
             ?: return null
         if (envelope.messageType != TYPE_STATUS && envelope.messageType != TYPE_PAIR_REQUEST &&
-            envelope.messageType != TYPE_PAIR_ACCEPT && envelope.messageType != TYPE_PAIR_REJECT
+            envelope.messageType != TYPE_PAIR_ACCEPT && envelope.messageType != TYPE_PAIR_REJECT &&
+            envelope.messageType != TYPE_HELLO
         ) {
             return runCatching {
                 json.decodeFromString(
@@ -130,6 +139,28 @@ object MessageProtocol {
             TYPE_PAIR_REJECT -> false
             else -> null
         }
+    }
+
+    fun wrapHello(deviceName: String, senderId: String, receiverId: String, json: Json): String {
+        val envelope = MessageEnvelope(
+            messageType = TYPE_HELLO,
+            payload = json.encodeToString(HelloPayload.serializer(), HelloPayload(deviceName)),
+            senderId = senderId,
+            receiverId = receiverId
+        )
+        return json.encodeToString(MessageEnvelope.serializer(), envelope)
+    }
+
+    /** Returns null for anything that isn't a hello envelope, or malformed input. */
+    fun unwrapHello(raw: String, json: Json): Hello? {
+        val envelope =
+            runCatching { json.decodeFromString(MessageEnvelope.serializer(), raw) }.getOrNull()
+                ?: return null
+        if (envelope.messageType != TYPE_HELLO) return null
+        val payload = runCatching {
+            json.decodeFromString(HelloPayload.serializer(), envelope.payload)
+        }.getOrNull() ?: return null
+        return Hello(senderId = envelope.senderId, deviceName = payload.deviceName)
     }
 
     private fun NavigationCommand.messageType(): String = when (this) {

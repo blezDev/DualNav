@@ -8,26 +8,32 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +57,7 @@ import com.blez.dualnav.feature.overlay.presentation.FloatingOverlayService
 import com.blez.dualnav.feature.overlay.presentation.OverlayPermission
 import com.blez.dualnav.ui.theme.DualNavTheme
 import com.blez.dualnav.ui.theme.LocalIsBleachTheme
+import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -61,6 +68,8 @@ fun CompanionHomeRoot(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     var overlayServiceRunning by remember { mutableStateOf(false) }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
@@ -112,12 +121,17 @@ fun CompanionHomeRoot(
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
+            is CompanionHomeEvent.ShowSnackbar -> {
+                val message = event.message.asString(context)
+                scope.launch { snackbarHostState.showSnackbar(message) }
+            }
             CompanionHomeEvent.NavigateToRoleSelection -> onNavigateToRoleSelection()
         }
     }
 
     CompanionHomeScreen(
         state = state,
+        snackbarHostState = snackbarHostState,
         onAction = viewModel::onAction,
         onNavigateToSettings = onNavigateToSettings
     )
@@ -167,6 +181,7 @@ private fun ObserveOnResume(onResume: () -> Unit) {
 @Composable
 fun CompanionHomeScreen(
     state: CompanionHomeState,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     onAction: (CompanionHomeAction) -> Unit = {},
     onNavigateToSettings: () -> Unit = {}
 ) {
@@ -182,7 +197,8 @@ fun CompanionHomeScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -198,6 +214,16 @@ fun CompanionHomeScreen(
             )
 
             ConnectionStatusCard(state.connectionStatus)
+
+            if (state.connectionStatus !is ConnectionStatus.Connected) {
+                OutlinedButton(
+                    onClick = { onAction(CompanionHomeAction.OnReconnectClick) },
+                    enabled = !state.isReconnecting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.companion_home_reconnect))
+                }
+            }
 
             Text(
                 text = stringResource(R.string.companion_home_activity_label),
@@ -228,6 +254,19 @@ fun CompanionHomeScreen(
             dismissText = stringResource(R.string.disconnect_confirm_no),
             onConfirm = { onAction(CompanionHomeAction.OnDisconnectConfirmed) },
             onDismiss = { onAction(CompanionHomeAction.OnDisconnectCancelled) }
+        )
+    }
+
+    if (state.showRemoteDisconnectedDialog) {
+        AlertDialog(
+            onDismissRequest = { onAction(CompanionHomeAction.OnRemoteDisconnectedAcknowledged) },
+            title = { Text(stringResource(R.string.remote_disconnected_control_title)) },
+            text = { Text(stringResource(R.string.remote_disconnected_control_message)) },
+            confirmButton = {
+                TextButton(onClick = { onAction(CompanionHomeAction.OnRemoteDisconnectedAcknowledged) }) {
+                    Text(stringResource(R.string.remote_disconnected_ok))
+                }
+            }
         )
     }
 }

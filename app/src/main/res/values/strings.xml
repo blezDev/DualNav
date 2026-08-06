@@ -19,6 +19,13 @@
     <string name="disconnect_confirm_yes">Disconnect</string>
     <string name="disconnect_confirm_no">Cancel</string>
 
+    <!-- Remote disconnect notice (fired by the other phone's own disconnect) -->
+    <string name="remote_disconnected_control_title">Control phone disconnected</string>
+    <string name="remote_disconnected_control_message">The control phone ended this session. You\'ll need to pair again to reconnect.</string>
+    <string name="remote_disconnected_companion_title">Companion phone disconnected</string>
+    <string name="remote_disconnected_companion_message">The companion phone ended this session. You\'ll need to pair again to reconnect.</string>
+    <string name="remote_disconnected_ok">OK</string>
+
     <!-- Errors -->
     <string name="error_disk_full">Storage is full</string>
     <string name="error_not_found">Not found</string>
@@ -31,6 +38,7 @@
     <string name="error_timeout">Connection timed out</string>
     <string name="error_not_connected">Not connected to a device</string>
     <string name="error_pairing_rejected">The other phone declined the pairing request</string>
+    <string name="error_session_ended">The other phone ended this session</string>
     <string name="error_invalid_maps_link">That doesn\'t look like a valid Maps link</string>
     <string name="error_maps_link_unreachable">Couldn\'t open that link. Check your internet connection.</string>
     <string name="error_invalid_number">Enter a valid number</string>
@@ -88,6 +96,7 @@
     <!-- Control home -->
     <string name="control_home_title">DualNav Control</string>
     <string name="control_home_maps_link_label">Paste a Google Maps link</string>
+    <string name="control_home_reconnect">Reconnect</string>
     <string name="control_home_maps_link_placeholder">https://maps.app.goo.gl/…</string>
     <string name="control_home_send_destination">Send destination</string>
     <string name="control_home_travel_mode_car">Car</string>
@@ -120,6 +129,8 @@
 
     <!-- Manual coordinate dialog -->
     <string name="manual_coordinate_dialog_title">Enter coordinates</string>
+    <string name="manual_coordinate_dialog_title_add_stop">Add stop</string>
+    <string name="manual_coordinate_maps_link_label">Google Maps link</string>
     <string name="manual_coordinate_latitude_label">Latitude</string>
     <string name="manual_coordinate_longitude_label">Longitude</string>
     <string name="manual_coordinate_address_label">Label (optional)</string>
@@ -130,6 +141,7 @@
     <string name="companion_home_title">Companion phone</string>
     <string name="companion_home_subtitle">Listening for destinations from the control phone</string>
     <string name="companion_home_status_label">Connection status</string>
+    <string name="companion_home_reconnect">Reconnect</string>
     <string name="companion_home_activity_label">Recent activity</string>
     <string name="companion_home_no_activity">Nothing received yet</string>
     <string name="companion_command_navigate">Navigate to %1$s</string>

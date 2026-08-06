@@ -3,16 +3,19 @@ package com.blez.dualnav.core.data.repository
 import com.blez.dualnav.core.data.datasource.BluetoothDataSource
 import com.blez.dualnav.core.data.datasource.FirebaseDataSource
 import com.blez.dualnav.core.data.datasource.PreferencesDataSource
+import com.blez.dualnav.core.data.datasource.ReconnectionRegistryDataSource
 import com.blez.dualnav.core.data.datasource.WiFiDataSource
 import com.blez.dualnav.core.domain.model.AppRole
 import com.blez.dualnav.core.domain.model.ConnectionStatus
 import com.blez.dualnav.core.domain.model.ConnectionType
 import com.blez.dualnav.core.domain.model.DeviceInfo
 import com.blez.dualnav.core.domain.model.PairingState
+import com.blez.dualnav.core.domain.model.ReconnectionSession
 import com.blez.dualnav.core.domain.repository.ConnectionRepository
 import com.blez.dualnav.core.domain.repository.DeviceRepository
 import com.blez.dualnav.core.domain.util.DataError
 import com.blez.dualnav.core.domain.util.EmptyResult
+import com.blez.dualnav.core.domain.util.Hello
 import com.blez.dualnav.core.domain.util.Logger
 import com.blez.dualnav.core.domain.util.MessageProtocol
 import com.blez.dualnav.core.domain.util.PairingRequest
@@ -28,11 +31,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -43,6 +49,7 @@ class MultiTransportConnectionRepository(
     private val firebaseDataSource: FirebaseDataSource,
     private val preferencesDataSource: PreferencesDataSource,
     private val deviceRepository: DeviceRepository,
+    private val reconnectionRegistryDataSource: ReconnectionRegistryDataSource,
     private val logger: Logger,
     private val json: Json
 ) : ConnectionRepository {
@@ -59,6 +66,8 @@ class MultiTransportConnectionRepository(
     init {
         watchForUnexpectedDisconnects()
         watchIncomingPairingRequests()
+        watchIncomingBluetoothHellos()
+        sendHelloOnBluetoothConnect()
     }
 
     override suspend fun initializeConnection(
@@ -183,14 +192,19 @@ class MultiTransportConnectionRepository(
         if (request != null) {
             deviceRepository.savePairedDevice(
                 DeviceInfo(
+                    // Companion never dials CONTROL by address (see reconnectWifi) - this is only
+                    // ever used as the Firebase-session peer id, not a socket target, so the
+                    // sender's stable id doubles as deviceId here rather than a host:port.
                     deviceId = request.senderId,
                     deviceName = request.deviceName,
                     role = AppRole.CONTROL,
                     connectionType = connectionType,
                     lastSeen = System.currentTimeMillis(),
-                    isConnected = true
+                    isConnected = true,
+                    stableId = request.senderId
                 )
             )
+            repositoryScope.launch { syncSessionActive(request.senderId) }
         }
         deviceRepository.setConnectionEstablished(true)
         return sendResult
@@ -210,7 +224,20 @@ class MultiTransportConnectionRepository(
         }
     }
 
+    /**
+     * An explicit disconnect from either side marks the shared session as intentionally ended in
+     * Firebase, so the other phone won't keep trying to reconnect — even after being fully closed
+     * and relaunched.
+     */
     override suspend fun disconnect(): EmptyResult<DataError> {
+        markSessionEnded()
+        return tearDownTransport()
+    }
+
+    /** Tears down the local transport without touching the shared Firebase record — used both by
+     * [disconnect] (after it writes its own ENDED record) and by [acknowledgeRemoteDisconnect]
+     * (where the peer's ENDED record is already authoritative and shouldn't be overwritten). */
+    private suspend fun tearDownTransport(): EmptyResult<DataError> {
         isManualDisconnect = true
         deviceRepository.setConnectionEstablished(false)
         return when (preferencesDataSource.getConnectionType().first()) {
@@ -221,11 +248,47 @@ class MultiTransportConnectionRepository(
         }
     }
 
+    override suspend fun acknowledgeRemoteDisconnect(): EmptyResult<DataError> = tearDownTransport()
+
+    /** Live: resolves the current pairing once (role + local/peer device IDs) and then follows the
+     * shared Firebase record for it, emitting whenever the *other* role records an ENDED status —
+     * so a still-connected phone finds out immediately, without waiting on the socket to drop.
+     * Retries indefinitely on any failure (e.g. a transient anonymous-auth hiccup right as this
+     * device lands on its home screen) - a single upstream sign-in failure would otherwise close
+     * this cold flow forever, since it's only collected once per ViewModel lifetime. */
+    override fun observeRemoteSessionEnded(): Flow<Unit> = flow {
+        val localId = preferencesDataSource.getDeviceInfo().first()?.deviceId ?: return@flow
+        val role = deviceRepository.getDeviceRole() ?: return@flow
+        val peerId = peerSessionId() ?: return@flow
+        val (controlId, companionId) = if (role == AppRole.CONTROL) localId to peerId else peerId to localId
+        emitAll(
+            reconnectionRegistryDataSource.observeSession(controlId, companionId)
+                .mapNotNull { session ->
+                    val endedByOther = session?.status == ReconnectionSession.Status.ENDED &&
+                            session.endedByRole != null &&
+                            session.endedByRole != role
+                    if (endedByOther) Unit else null
+                }
+        )
+    }.retryWhen { cause, _ ->
+        logger.warn("Remote-session-ended listener failed, retrying", cause)
+        delay(REMOTE_LISTENER_RETRY_DELAY_MS)
+        true
+    }
+
     /** Re-dials the last paired device (or just restarts listening, if we were the acceptor) using
-     * the persisted role/connection type — used when landing directly on a home screen. */
+     * the persisted role/connection type — used when landing directly on a home screen, including
+     * right after a fresh process start. Bails out if the other side recorded an explicit end to
+     * this session in Firebase, even if this device never disconnected locally. */
     override suspend fun resumeConnection(): EmptyResult<DataError> {
         val connectionType = preferencesDataSource.getConnectionType().first()
             ?: return Result.Error(DataError.Connection.NOT_CONNECTED)
+        val sessionPeerId = peerSessionId()
+        if (sessionPeerId != null && !shouldAttemptReconnect(sessionPeerId)) {
+            isManualDisconnect = true
+            deviceRepository.setConnectionEstablished(false)
+            return Result.Error(DataError.Connection.SESSION_ENDED)
+        }
         isManualDisconnect = false
         lastPairedDeviceId = (deviceRepository.getPairedDevice() as? Result.Success)?.data?.deviceId
         return reconnectOnce(connectionType)
@@ -280,10 +343,82 @@ class MultiTransportConnectionRepository(
             role = pairedRole,
             connectionType = connectionType,
             lastSeen = System.currentTimeMillis(),
-            isConnected = true
+            isConnected = true,
+            stableId = known?.stableId
         )
         deviceRepository.savePairedDevice(info)
         deviceRepository.setConnectionEstablished(true)
+        // Firebase session tracking keys off the peer's stable identity, not a WiFi host:port -
+        // otherwise Control and Companion would independently compute two different session
+        // nodes and never see each other's writes.
+        repositoryScope.launch { syncSessionActive(known?.stableId ?: deviceId) }
+    }
+
+    /** Marks the shared Firebase session ACTIVE for [peerDeviceId] and the local device, so both
+     * sides know a future reconnect attempt (relaunch or unexpected drop) is expected. Best-effort:
+     * failures here don't affect the pairing result itself. */
+    private suspend fun syncSessionActive(peerDeviceId: String) {
+        val (controlId, companionId) = controlAndCompanionIds(peerDeviceId) ?: return
+        reconnectionRegistryDataSource.upsertSession(
+            ReconnectionSession(
+                controlDeviceId = controlId,
+                companionDeviceId = companionId,
+                status = ReconnectionSession.Status.ACTIVE
+            )
+        )
+    }
+
+    /** Records that the local device explicitly ended this session, so the other phone won't keep
+     * trying to reconnect to it — even after its app is fully closed and relaunched. Awaited (with
+     * a timeout) rather than fire-and-forget, since this is the authoritative "stop" signal. */
+    private suspend fun markSessionEnded() {
+        val peerId = peerSessionId() ?: return
+        val role = deviceRepository.getDeviceRole() ?: return
+        val (controlId, companionId) = controlAndCompanionIds(peerId) ?: return
+        withTimeoutOrNull(REMOTE_SESSION_TIMEOUT_MS) {
+            reconnectionRegistryDataSource.upsertSession(
+                ReconnectionSession(
+                    controlDeviceId = controlId,
+                    companionDeviceId = companionId,
+                    status = ReconnectionSession.Status.ENDED,
+                    endedByRole = role
+                )
+            )
+        }
+    }
+
+    /**
+     * False only when Firebase has an on-record, explicit end for this exact pairing. Defaults to
+     * true (allow reconnecting) when there's no record yet or Firebase can't be reached, so this
+     * never makes the underlying BT/WiFi transport depend on internet access.
+     */
+    private suspend fun shouldAttemptReconnect(peerId: String): Boolean {
+        val (controlId, companionId) = controlAndCompanionIds(peerId) ?: return true
+        val result = withTimeoutOrNull(REMOTE_SESSION_TIMEOUT_MS) {
+            reconnectionRegistryDataSource.getSession(controlId, companionId)
+        }
+        val session = (result as? Result.Success)?.data ?: return true
+        return session.status != ReconnectionSession.Status.ENDED
+    }
+
+    private suspend fun controlAndCompanionIds(peerDeviceId: String): Pair<String, String>? {
+        val localId = preferencesDataSource.getDeviceInfo().first()?.deviceId ?: return null
+        return when (deviceRepository.getDeviceRole()) {
+            AppRole.CONTROL -> localId to peerDeviceId
+            AppRole.COMPANION -> peerDeviceId to localId
+            null -> null
+        }
+    }
+
+    /** The peer's identity for Firebase session-tracking, as opposed to [DeviceInfo.deviceId] -
+     * for WiFi the latter is a transient `host:port` that Control and Companion wouldn't
+     * independently arrive at the same value for, which would silently split them onto two
+     * different session records. Prefers the persistent [DeviceInfo.stableId], falling back to
+     * [DeviceInfo.deviceId] for transports where that already is a stable identifier (Bluetooth's
+     * MAC address, Firebase's own peer id). */
+    private suspend fun peerSessionId(): String? {
+        val paired = (deviceRepository.getPairedDevice() as? Result.Success)?.data ?: return null
+        return paired.stableId ?: paired.deviceId
     }
 
     /** Companion-only in practice: Control never receives a pairing request from itself. */
@@ -302,6 +437,71 @@ class MultiTransportConnectionRepository(
     }
 
     /**
+     * Bluetooth has no PIN handshake like WiFi's - Control dials Companion's MAC directly, so
+     * Companion never otherwise learns Control's persistent identity, and neither side gets the
+     * other's [DeviceInfo.stableId] for Firebase session-tracking. Both sides send this the moment
+     * their raw status goes Connected (fresh pairing or a reconnect), so it's symmetric and
+     * needs no coordination about who goes first.
+     */
+    private fun sendHelloOnBluetoothConnect() {
+        repositoryScope.launch {
+            rawConnectionStatus().distinctUntilChanged().collect { status ->
+                if (status == ConnectionStatus.Connected &&
+                    preferencesDataSource.getConnectionType().first() == ConnectionType.BLUETOOTH
+                ) {
+                    val localInfo = preferencesDataSource.getDeviceInfo().first() ?: return@collect
+                    bluetoothDataSource.sendMessage(
+                        MessageProtocol.wrapHello(
+                            deviceName = localInfo.deviceName,
+                            senderId = localInfo.deviceId,
+                            receiverId = "",
+                            json = json
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun watchIncomingBluetoothHellos() {
+        repositoryScope.launch {
+            bluetoothDataSource.receiveMessage()
+                .mapNotNull { MessageProtocol.unwrapHello(it, json) }
+                .collect { hello -> handleIncomingHello(hello) }
+        }
+    }
+
+    /**
+     * Merges the peer's stable id into the existing paired-device record (Control already has one
+     * from [persistPairedDevice], keyed by the dialable MAC address - this must not replace that
+     * `deviceId` with the peer's identity id, or reconnecting would try to dial a UUID as a MAC
+     * address) or creates one (Companion never otherwise gets one for Bluetooth, since it only
+     * ever accepts an incoming connection and is never told who connected).
+     */
+    private suspend fun handleIncomingHello(hello: Hello) {
+        val role = deviceRepository.getDeviceRole()
+        val peerRole = if (role == AppRole.CONTROL) AppRole.COMPANION else AppRole.CONTROL
+        val existing = (deviceRepository.getPairedDevice() as? Result.Success)?.data
+        val info = existing?.copy(
+            deviceName = hello.deviceName,
+            stableId = hello.senderId,
+            isConnected = true,
+            lastSeen = System.currentTimeMillis()
+        ) ?: DeviceInfo(
+            deviceId = hello.senderId,
+            deviceName = hello.deviceName,
+            role = peerRole,
+            connectionType = ConnectionType.BLUETOOTH,
+            lastSeen = System.currentTimeMillis(),
+            isConnected = true,
+            stableId = hello.senderId
+        )
+        deviceRepository.savePairedDevice(info)
+        deviceRepository.setConnectionEstablished(true)
+        repositoryScope.launch { syncSessionActive(info.stableId ?: info.deviceId) }
+    }
+
+    /**
      * A deliberate [disconnect] sets [isManualDisconnect] so this watcher leaves it alone;
      * anything else (a dropped socket, the app relaunching after a saved role) retries the
      * last connection with capped exponential backoff until it succeeds or a manual disconnect
@@ -315,7 +515,16 @@ class MultiTransportConnectionRepository(
                         _pairingState.value = PairingState.Idle
                         pendingIncomingRequest = null
                     }
-                    if (!isManualDisconnect) reconnectWithBackoff()
+                    if (!isManualDisconnect) {
+                        val peerId = peerSessionId()
+                        if (peerId != null && !shouldAttemptReconnect(peerId)) {
+                            logger.info("Session was ended by the control phone, giving up on reconnecting")
+                            isManualDisconnect = true
+                            deviceRepository.setConnectionEstablished(false)
+                        } else {
+                            reconnectWithBackoff()
+                        }
+                    }
                 }
             }
         }
@@ -341,15 +550,67 @@ class MultiTransportConnectionRepository(
     private suspend fun reconnectOnce(connectionType: ConnectionType): EmptyResult<DataError.Connection> {
         val deviceId = lastPairedDeviceId
         return when (connectionType) {
-            ConnectionType.BLUETOOTH -> if (deviceId != null) bluetoothDataSource.pairDevice(deviceId) else bluetoothDataSource.connect()
-            ConnectionType.WIFI -> if (deviceId != null) wifiDataSource.connectToDevice(deviceId) else wifiDataSource.connect()
+            ConnectionType.BLUETOOTH -> reconnectBluetooth(deviceId)
+            ConnectionType.WIFI -> reconnectWifi(deviceId)
             ConnectionType.FIREBASE -> firebaseDataSource.connect()
         }
+    }
+
+    /**
+     * Control dials Companion's MAC directly; Companion only ever accepts. Since the HELLO
+     * handshake now gives Companion a paired-device record too (for Firebase session-tracking),
+     * its `deviceId` there is Control's *identity* id, not a MAC address - passing that to
+     * `pairDevice` would try to treat a UUID as a Bluetooth address. Companion must always just
+     * restart listening instead.
+     */
+    private suspend fun reconnectBluetooth(deviceId: String?): EmptyResult<DataError.Connection> {
+        if (deviceRepository.getDeviceRole() == AppRole.COMPANION) return bluetoothDataSource.connect()
+        if (deviceId == null) return bluetoothDataSource.connect()
+        return bluetoothDataSource.pairDevice(deviceId)
+    }
+
+    /**
+     * The WiFi PIN handshake always has CONTROL dial out and COMPANION accept - COMPANION never
+     * has a real address to dial, so its persisted "peer id" is a stable identity, not a
+     * `host:port`. Reconnecting as COMPANION therefore just means listening again, never
+     * `connectToDevice`.
+     *
+     * For CONTROL, the stored `host:port` goes stale the moment the peer's IP changes (e.g. a
+     * DHCP lease renewal) — the most common cause of a reconnect failing with DEVICE_NOT_FOUND
+     * even though the same physical device is right there. Before giving up, re-run NSD discovery
+     * and look for that same device by its persisted, IP-independent stable id (falling back to
+     * its name, for pairings recorded before that id was tracked), then retry once against
+     * whatever address it resolves to now.
+     */
+    private suspend fun reconnectWifi(deviceId: String?): EmptyResult<DataError.Connection> {
+        if (deviceRepository.getDeviceRole() == AppRole.COMPANION) return wifiDataSource.connect()
+        if (deviceId == null) return wifiDataSource.connect()
+
+        val result = wifiDataSource.connectToDevice(deviceId)
+        if (result !is Result.Error || result.error != DataError.Connection.DEVICE_NOT_FOUND) return result
+
+        val paired = (deviceRepository.getPairedDevice() as? Result.Success)?.data ?: return result
+        val candidates =
+            (wifiDataSource.discoverDevices() as? Result.Success)?.data ?: return result
+        val rediscovered =
+            candidates.firstOrNull { it.stableId != null && it.stableId == paired.stableId }
+                ?: candidates.firstOrNull { it.deviceName == paired.deviceName }
+                ?: return result
+
+        logger.info("WiFi peer's address changed, reconnecting via freshly discovered ${rediscovered.deviceId}")
+        val retryResult = wifiDataSource.connectToDevice(rediscovered.deviceId)
+        if (retryResult is Result.Success) {
+            lastPairedDeviceId = rediscovered.deviceId
+            persistPairedDevice(rediscovered.deviceId, ConnectionType.WIFI)
+        }
+        return retryResult
     }
 
     private companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
         const val MAX_BACKOFF_MS = 30_000L
         const val PAIRING_TIMEOUT_MS = 30_000L
+        const val REMOTE_SESSION_TIMEOUT_MS = 5_000L
+        const val REMOTE_LISTENER_RETRY_DELAY_MS = 5_000L
     }
 }

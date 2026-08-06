@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.blez.dualnav.R
 import com.blez.dualnav.core.domain.model.ConnectionStatus
+import com.blez.dualnav.core.domain.model.Destination
 import com.blez.dualnav.core.domain.model.NavigationCommand
 import com.blez.dualnav.core.domain.repository.ConnectionRepository
 import com.blez.dualnav.core.domain.repository.DeviceRepository
 import com.blez.dualnav.core.domain.repository.MessageRepository
+import com.blez.dualnav.core.domain.util.DataError
 import com.blez.dualnav.core.domain.util.onFailure
 import com.blez.dualnav.core.domain.util.onSuccess
 import com.blez.dualnav.core.presentation.util.UiText
@@ -44,7 +46,12 @@ class ControlHomeViewModel(
         }
         viewModelScope.launch {
             if (connectionRepository.getConnectionStatus().first() !is ConnectionStatus.Connected) {
-                connectionRepository.resumeConnection()
+                attemptReconnect()
+            }
+        }
+        viewModelScope.launch {
+            connectionRepository.observeRemoteSessionEnded().collect {
+                _state.update { it.copy(showRemoteDisconnectedDialog = true) }
             }
         }
     }
@@ -55,8 +62,9 @@ class ControlHomeViewModel(
             is ControlHomeAction.OnTravelModeSelected -> _state.update { it.copy(travelMode = action.travelMode) }
             ControlHomeAction.OnSendMapsLinkClick -> sendMapsLink()
             ControlHomeAction.OnOpenManualEntryClick -> openManualDialog(ManualDialogMode.NAVIGATE)
-            ControlHomeAction.OnAddStopClick -> addStop()
+            ControlHomeAction.OnAddStopClick -> openManualDialog(ManualDialogMode.ADD_STOP)
             ControlHomeAction.OnDismissManualDialog -> _state.update { it.copy(showManualDialog = false) }
+            is ControlHomeAction.OnManualMapsLinkChange -> _state.update { it.copy(manualMapsLink = action.value) }
             is ControlHomeAction.OnManualLatitudeChange -> _state.update { it.copy(manualLatitude = action.value) }
             is ControlHomeAction.OnManualLongitudeChange -> _state.update { it.copy(manualLongitude = action.value) }
             is ControlHomeAction.OnManualAddressChange -> _state.update { it.copy(manualAddress = action.value) }
@@ -64,6 +72,7 @@ class ControlHomeViewModel(
             ControlHomeAction.OnStopClick -> sendSimpleCommand(NavigationCommand.Stop, R.string.control_home_stop_sent)
             ControlHomeAction.OnResumeClick -> sendSimpleCommand(NavigationCommand.Resume, R.string.control_home_resume_sent)
             ControlHomeAction.OnBackPress -> _state.update { it.copy(showDisconnectConfirmation = true) }
+            ControlHomeAction.OnReconnectClick -> viewModelScope.launch { attemptReconnect() }
             ControlHomeAction.OnDisconnectCancelled -> _state.update {
                 it.copy(
                     showDisconnectConfirmation = false
@@ -71,7 +80,31 @@ class ControlHomeViewModel(
             }
 
             ControlHomeAction.OnDisconnectConfirmed -> disconnect()
+            ControlHomeAction.OnRemoteDisconnectedAcknowledged -> acknowledgeRemoteDisconnect()
         }
+    }
+
+    private fun acknowledgeRemoteDisconnect() {
+        viewModelScope.launch {
+            connectionRepository.acknowledgeRemoteDisconnect()
+            deviceRepository.clearDeviceRole()
+            _state.update { it.copy(showRemoteDisconnectedDialog = false) }
+            _events.send(ControlHomeEvent.NavigateToRoleSelection)
+        }
+    }
+
+    private suspend fun attemptReconnect() {
+        _state.update { it.copy(isReconnecting = true) }
+        connectionRepository.resumeConnection()
+            .onFailure { error ->
+                if (error == DataError.Connection.SESSION_ENDED) {
+                    deviceRepository.clearDeviceRole()
+                    _events.send(ControlHomeEvent.NavigateToRoleSelection)
+                } else {
+                    _events.send(ControlHomeEvent.ShowSnackbar(error.toUiText()))
+                }
+            }
+        _state.update { it.copy(isReconnecting = false) }
     }
 
     private fun disconnect() {
@@ -88,6 +121,7 @@ class ControlHomeViewModel(
             it.copy(
                 showManualDialog = true,
                 manualDialogMode = mode,
+                manualMapsLink = if (mode == ManualDialogMode.ADD_STOP) it.mapsLink.trim() else "",
                 manualLatitude = "",
                 manualLongitude = "",
                 manualAddress = ""
@@ -115,58 +149,59 @@ class ControlHomeViewModel(
         }
     }
 
-    /** Uses the pasted Maps link as the stop when one is present; otherwise falls back to the
-     * manual coordinate dialog, same as before links could be used for this. */
-    private fun addStop() {
-        val link = _state.value.mapsLink.trim()
-        if (link.isNotEmpty()) {
-            addStopFromLink(link)
-        } else {
-            openManualDialog(ManualDialogMode.ADD_STOP)
-        }
-    }
-
-    private fun addStopFromLink(link: String) {
-        val travelMode = _state.value.travelMode
-        viewModelScope.launch {
-            _state.update { it.copy(isSendingLink = true) }
-            parseMapsLinkUseCase(link)
-                .onSuccess { destination ->
-                    sendCommand(
-                        NavigationCommand.AddStop(destination, travelMode),
-                        R.string.control_home_stop_added
-                    )
-                    _state.update { it.copy(isSendingLink = false) }
-                }
-                .onFailure { error ->
-                    _state.update { it.copy(isSendingLink = false) }
-                    _events.send(ControlHomeEvent.ShowSnackbar(error.toUiText()))
-                }
-        }
-    }
-
     private fun confirmManualEntry() {
         val current = _state.value
-        val result = parseCoordinatesUseCase(current.manualLatitude, current.manualLongitude, current.manualAddress)
-        viewModelScope.launch {
-            result
-                .onSuccess { destination ->
-                    val command = if (current.manualDialogMode == ManualDialogMode.ADD_STOP) {
-                        NavigationCommand.AddStop(destination, current.travelMode)
-                    } else {
-                        NavigationCommand.Navigate(destination, current.travelMode)
+        val link = current.manualMapsLink.trim()
+        val command = if (current.manualDialogMode == ManualDialogMode.ADD_STOP) {
+            { destination: Destination ->
+                NavigationCommand.AddStop(
+                    destination,
+                    current.travelMode
+                )
+            }
+        } else {
+            { destination: Destination ->
+                NavigationCommand.Navigate(
+                    destination,
+                    current.travelMode
+                )
+            }
+        }
+        val confirmationRes = if (current.manualDialogMode == ManualDialogMode.ADD_STOP) {
+            R.string.control_home_stop_added
+        } else {
+            R.string.control_home_destination_sent
+        }
+
+        if (link.isNotEmpty()) {
+            viewModelScope.launch {
+                _state.update { it.copy(isSendingLink = true) }
+                parseMapsLinkUseCase(link)
+                    .onSuccess { destination ->
+                        sendCommand(command(destination), confirmationRes)
+                        _state.update { it.copy(isSendingLink = false, showManualDialog = false) }
                     }
-                    val confirmationRes = if (current.manualDialogMode == ManualDialogMode.ADD_STOP) {
-                        R.string.control_home_stop_added
-                    } else {
-                        R.string.control_home_destination_sent
+                    .onFailure { error ->
+                        _state.update { it.copy(isSendingLink = false) }
+                        _events.send(ControlHomeEvent.ShowSnackbar(error.toUiText()))
                     }
-                    sendCommand(command, confirmationRes)
-                    _state.update { it.copy(showManualDialog = false) }
-                }
-                .onFailure { error ->
-                    _events.send(ControlHomeEvent.ShowSnackbar(error.toUiText()))
-                }
+            }
+        } else {
+            val result = parseCoordinatesUseCase(
+                current.manualLatitude,
+                current.manualLongitude,
+                current.manualAddress
+            )
+            viewModelScope.launch {
+                result
+                    .onSuccess { destination ->
+                        sendCommand(command(destination), confirmationRes)
+                        _state.update { it.copy(showManualDialog = false) }
+                    }
+                    .onFailure { error ->
+                        _events.send(ControlHomeEvent.ShowSnackbar(error.toUiText()))
+                    }
+            }
         }
     }
 

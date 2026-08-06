@@ -16,6 +16,7 @@ sealed interface DataError : Error {
         TIMEOUT,
         NOT_CONNECTED,
         PAIRING_REJECTED,
+        SESSION_ENDED,
         UNKNOWN
     }
 }

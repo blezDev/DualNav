@@ -14,12 +14,15 @@ data class ControlHomeState(
     val isSendingLink: Boolean = false,
     val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
     val isSendingCommand: Boolean = false,
+    val isReconnecting: Boolean = false,
     val showManualDialog: Boolean = false,
     val manualDialogMode: ManualDialogMode = ManualDialogMode.NAVIGATE,
+    val manualMapsLink: String = "",
     val manualLatitude: String = "",
     val manualLongitude: String = "",
     val manualAddress: String = "",
-    val showDisconnectConfirmation: Boolean = false
+    val showDisconnectConfirmation: Boolean = false,
+    val showRemoteDisconnectedDialog: Boolean = false
 )
 
 sealed interface ControlHomeAction {
@@ -29,6 +32,7 @@ sealed interface ControlHomeAction {
     data object OnOpenManualEntryClick : ControlHomeAction
     data object OnAddStopClick : ControlHomeAction
     data object OnDismissManualDialog : ControlHomeAction
+    data class OnManualMapsLinkChange(val value: String) : ControlHomeAction
     data class OnManualLatitudeChange(val value: String) : ControlHomeAction
     data class OnManualLongitudeChange(val value: String) : ControlHomeAction
     data class OnManualAddressChange(val value: String) : ControlHomeAction
@@ -36,8 +40,10 @@ sealed interface ControlHomeAction {
     data object OnStopClick : ControlHomeAction
     data object OnResumeClick : ControlHomeAction
     data object OnBackPress : ControlHomeAction
+    data object OnReconnectClick : ControlHomeAction
     data object OnDisconnectConfirmed : ControlHomeAction
     data object OnDisconnectCancelled : ControlHomeAction
+    data object OnRemoteDisconnectedAcknowledged : ControlHomeAction
 }
 
 sealed interface ControlHomeEvent {
