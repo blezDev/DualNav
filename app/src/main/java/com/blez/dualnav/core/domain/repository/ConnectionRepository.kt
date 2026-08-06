@@ -40,4 +40,12 @@ interface ConnectionRepository {
      * that the other phone already recorded the session as ended — unlike [disconnect], this
      * doesn't re-write the shared Firebase record, since the peer's record is already authoritative. */
     suspend fun acknowledgeRemoteDisconnect(): EmptyResult<DataError>
+
+    /** Control-only, Firebase transport: generates a short code and starts waiting for Companion
+     * to join it - reflected via [getPairingState] as [PairingState.WaitingForRelayPeer], and
+     * [getConnectionStatus] stays masked as Reconnecting until Companion actually joins. */
+    suspend fun createRelayChannel(): Result<String, DataError>
+
+    /** Companion-only, Firebase transport: joins a code Control generated/shared. */
+    suspend fun joinRelayChannel(code: String): EmptyResult<DataError>
 }

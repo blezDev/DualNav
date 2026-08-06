@@ -20,10 +20,12 @@ import com.blez.dualnav.core.domain.util.Logger
 import com.blez.dualnav.core.domain.util.MessageProtocol
 import com.blez.dualnav.core.domain.util.PairingRequest
 import com.blez.dualnav.core.domain.util.Result
+import com.blez.dualnav.core.domain.util.map
 import com.blez.dualnav.core.domain.util.onSuccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -62,6 +64,7 @@ class MultiTransportConnectionRepository(
     @Volatile private var lastDiscoveredDevices: List<DeviceInfo> = emptyList()
     @Volatile
     private var pendingIncomingRequest: PairingRequest? = null
+    private var relayPeerWaitJob: Job? = null
 
     init {
         watchForUnexpectedDisconnects()
@@ -162,6 +165,8 @@ class MultiTransportConnectionRepository(
     override suspend fun cancelPairing(): EmptyResult<DataError> {
         _pairingState.value = PairingState.Idle
         pendingIncomingRequest = null
+        relayPeerWaitJob?.cancel()
+        relayPeerWaitJob = null
         return disconnect()
     }
 
@@ -210,13 +215,90 @@ class MultiTransportConnectionRepository(
         return sendResult
     }
 
+    override suspend fun createRelayChannel(): Result<String, DataError> {
+        val result = firebaseDataSource.createChannel()
+        return when (result) {
+            is Result.Error -> result
+            is Result.Success -> {
+                val code = result.data
+                preferencesDataSource.saveConnectionType(ConnectionType.FIREBASE)
+                deviceRepository.savePairedDevice(
+                    DeviceInfo(
+                        deviceId = code,
+                        deviceName = "Cloud relay",
+                        role = AppRole.COMPANION,
+                        connectionType = ConnectionType.FIREBASE,
+                        lastSeen = System.currentTimeMillis(),
+                        isConnected = false
+                    )
+                )
+                _pairingState.value = PairingState.WaitingForRelayPeer(code)
+                relayPeerWaitJob?.cancel()
+                relayPeerWaitJob = repositoryScope.launch { awaitRelayPeer(code) }
+                Result.Success(code)
+            }
+        }
+    }
+
+    /** Waits for Companion to join [code], then finalizes the pairing exactly like the WiFi PIN
+     * handshake's acceptance does: persists Companion's stable id, marks the connection
+     * established, and syncs the shared Firebase session - then clears [PairingState], which
+     * un-masks [getConnectionStatus] so Control's screen (and its auto-navigate watcher) can
+     * finally treat this as Connected. */
+    private suspend fun awaitRelayPeer(code: String) {
+        val companionUid = firebaseDataSource.observePeerJoined(code).first()
+        val existing = (deviceRepository.getPairedDevice() as? Result.Success)?.data
+        val info = (existing ?: DeviceInfo(
+            deviceId = code,
+            deviceName = "Cloud relay",
+            role = AppRole.COMPANION,
+            connectionType = ConnectionType.FIREBASE,
+            lastSeen = System.currentTimeMillis(),
+            isConnected = false
+        )).copy(stableId = companionUid, isConnected = true, lastSeen = System.currentTimeMillis())
+        deviceRepository.savePairedDevice(info)
+        deviceRepository.setConnectionEstablished(true)
+        syncSessionActive(companionUid)
+        _pairingState.value = PairingState.Idle
+    }
+
+    override suspend fun joinRelayChannel(code: String): EmptyResult<DataError> {
+        val result = firebaseDataSource.joinChannel(code)
+        return when (result) {
+            is Result.Error -> result
+            is Result.Success -> {
+                val controlUid = result.data
+                preferencesDataSource.saveConnectionType(ConnectionType.FIREBASE)
+                deviceRepository.savePairedDevice(
+                    DeviceInfo(
+                        deviceId = code,
+                        deviceName = "Cloud relay",
+                        role = AppRole.CONTROL,
+                        connectionType = ConnectionType.FIREBASE,
+                        lastSeen = System.currentTimeMillis(),
+                        isConnected = true,
+                        stableId = controlUid
+                    )
+                )
+                deviceRepository.setConnectionEstablished(true)
+                repositoryScope.launch { syncSessionActive(controlUid) }
+                Result.Success(Unit)
+            }
+        }
+    }
+
     override fun getPairingState(): Flow<PairingState> = _pairingState.asStateFlow()
 
     override fun getConnectionStatus(): Flow<ConnectionStatus> {
         // Masks a raw-Connected socket as Reconnecting while a pairing handshake hasn't been
-        // confirmed yet, so nothing downstream (e.g. the Continue button) treats it as usable.
+        // confirmed yet (WiFi), or while Control is still waiting for Companion to join its relay
+        // code (Firebase) - Firebase's raw status only reflects this device's own online-ness, not
+        // whether the peer has actually joined, so nothing downstream (e.g. the Continue button,
+        // or ConnectionSetupViewModel's auto-navigate) treats it as usable too early.
         return combine(rawConnectionStatus(), _pairingState) { raw, pairing ->
-            if (raw is ConnectionStatus.Connected && pairing is PairingState.AwaitingConfirmation) {
+            val awaitingPeer =
+                pairing is PairingState.AwaitingConfirmation || pairing is PairingState.WaitingForRelayPeer
+            if (raw is ConnectionStatus.Connected && awaitingPeer) {
                 ConnectionStatus.Reconnecting
             } else {
                 raw
@@ -239,6 +321,8 @@ class MultiTransportConnectionRepository(
      * (where the peer's ENDED record is already authoritative and shouldn't be overwritten). */
     private suspend fun tearDownTransport(): EmptyResult<DataError> {
         isManualDisconnect = true
+        relayPeerWaitJob?.cancel()
+        relayPeerWaitJob = null
         deviceRepository.setConnectionEstablished(false)
         return when (preferencesDataSource.getConnectionType().first()) {
             ConnectionType.BLUETOOTH -> bluetoothDataSource.disconnect()
@@ -552,7 +636,22 @@ class MultiTransportConnectionRepository(
         return when (connectionType) {
             ConnectionType.BLUETOOTH -> reconnectBluetooth(deviceId)
             ConnectionType.WIFI -> reconnectWifi(deviceId)
-            ConnectionType.FIREBASE -> firebaseDataSource.connect()
+            ConnectionType.FIREBASE -> reconnectFirebase()
+        }
+    }
+
+    /** Re-signs in (this repository, and any prior channel registration, doesn't survive process
+     * death) and re-registers on the persisted relay code - Control's controlUid write and
+     * Companion's companionUid write are both idempotent, so replaying either is safe. */
+    private suspend fun reconnectFirebase(): EmptyResult<DataError.Connection> {
+        val connectResult = firebaseDataSource.connect()
+        if (connectResult is Result.Error) return connectResult
+        val code = (deviceRepository.getPairedDevice() as? Result.Success)?.data?.deviceId
+            ?: return connectResult
+        return when (deviceRepository.getDeviceRole()) {
+            AppRole.CONTROL -> firebaseDataSource.registerAsControl(code)
+            AppRole.COMPANION -> firebaseDataSource.joinChannel(code).map { }
+            null -> connectResult
         }
     }
 

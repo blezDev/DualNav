@@ -86,6 +86,11 @@
     <string name="connection_setup_discover">Scan for devices</string>
     <string name="connection_setup_discovering">Scanning…</string>
     <string name="connection_setup_no_devices">No devices found yet</string>
+    <string name="connection_setup_generate_code">Generate code</string>
+    <string name="connection_setup_share_code">Share this code with the companion phone</string>
+    <string name="connection_setup_waiting_for_companion">Waiting for the companion phone to join…</string>
+    <string name="connection_setup_enter_code">Enter the code from the control phone</string>
+    <string name="connection_setup_join_code">Join</string>
     <string name="connection_setup_status_connected">Connected</string>
     <string name="connection_setup_status_disconnected">Disconnected</string>
     <string name="connection_setup_status_reconnecting">Reconnecting…</string>

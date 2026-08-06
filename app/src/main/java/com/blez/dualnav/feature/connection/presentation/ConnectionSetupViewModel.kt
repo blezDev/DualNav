@@ -53,18 +53,20 @@ class ConnectionSetupViewModel(
             }
         }
         viewModelScope.launch {
-            // Unlike WiFi's PIN handshake (which explicitly accepts and navigates in
-            // respondToPairingRequest) or Control (which navigates right after initiatePairing
-            // succeeds), Bluetooth's Companion side has no explicit "accept" step - the socket
-            // just connects silently in the background once Control dials in - so it needs to
-            // advance on its own instead of waiting on a manual Continue tap.
+            // Neither of these has an explicit "accept" step that can send NavigateNext directly
+            // (unlike WiFi's PIN handshake, or Control dialing a device): Bluetooth's Companion
+            // socket just connects silently once Control dials in, and Firebase's Control side
+            // only finds out Companion joined via a live listener - so both need to advance on
+            // their own once [getConnectionStatus] reports Connected, instead of waiting on a
+            // manual Continue tap.
             connectionRepository.getConnectionStatus().collect { status ->
                 val current = _state.value
-                if (status is ConnectionStatus.Connected &&
-                    current.role == AppRole.COMPANION &&
-                    current.selectedType == ConnectionType.BLUETOOTH
-                ) {
-                    _events.send(ConnectionSetupEvent.NavigateNext(AppRole.COMPANION))
+                val shouldAutoAdvance = status is ConnectionStatus.Connected && (
+                        (current.role == AppRole.COMPANION && current.selectedType == ConnectionType.BLUETOOTH) ||
+                                (current.role == AppRole.CONTROL && current.selectedType == ConnectionType.FIREBASE)
+                        )
+                if (shouldAutoAdvance && current.role != null) {
+                    _events.send(ConnectionSetupEvent.NavigateNext(current.role))
                 }
             }
         }
@@ -82,6 +84,14 @@ class ConnectionSetupViewModel(
             ConnectionSetupAction.OnCancelPairingClick -> cancelPairing()
             ConnectionSetupAction.OnAcceptPairingClick -> respondToPairingRequest(accepted = true)
             ConnectionSetupAction.OnRejectPairingClick -> respondToPairingRequest(accepted = false)
+            ConnectionSetupAction.OnGenerateRelayCodeClick -> generateRelayCode()
+            is ConnectionSetupAction.OnRelayCodeInputChange -> _state.update {
+                it.copy(
+                    relayCodeInput = action.value
+                )
+            }
+
+            ConnectionSetupAction.OnJoinRelayCodeClick -> joinRelayCode()
         }
     }
 
@@ -124,7 +134,9 @@ class ConnectionSetupViewModel(
                 selectedType = type,
                 isConnecting = true,
                 devices = emptyList(),
-                selectedDeviceId = null
+                selectedDeviceId = null,
+                relayCode = null,
+                relayCodeInput = ""
             )
         }
         viewModelScope.launch {
@@ -185,6 +197,31 @@ class ConnectionSetupViewModel(
                     }
                 }
                 .onFailure { error ->
+                    _events.send(ConnectionSetupEvent.ShowMessage(error.toUiText()))
+                }
+        }
+    }
+
+    private fun generateRelayCode() {
+        viewModelScope.launch {
+            connectionRepository.createRelayChannel()
+                .onSuccess { code -> _state.update { it.copy(relayCode = code) } }
+                .onFailure { error -> _events.send(ConnectionSetupEvent.ShowMessage(error.toUiText())) }
+        }
+    }
+
+    private fun joinRelayCode() {
+        val code = _state.value.relayCodeInput.trim()
+        if (code.isEmpty()) return
+        _state.update { it.copy(isPairing = true) }
+        pairingJob = viewModelScope.launch {
+            connectionRepository.joinRelayChannel(code)
+                .onSuccess {
+                    _state.update { it.copy(isPairing = false) }
+                    _events.send(ConnectionSetupEvent.NavigateNext(AppRole.COMPANION))
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(isPairing = false) }
                     _events.send(ConnectionSetupEvent.ShowMessage(error.toUiText()))
                 }
         }

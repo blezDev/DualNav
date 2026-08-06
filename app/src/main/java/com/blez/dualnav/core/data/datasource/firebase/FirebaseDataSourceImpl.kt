@@ -19,15 +19,17 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.random.Random
 
 /**
- * Cloud relay fallback: Firebase Realtime Database under `users/{uid}/messages`, with anonymous
- * auth providing the per-pair `uid` and `.info/connected` driving live connection status.
- * No device discovery here — pairing for this transport happens out of band (shared uid/room),
- * so [com.blez.dualnav.core.domain.repository.ConnectionRepository] never routes discovery here.
+ * Cloud relay fallback: Firebase Realtime Database under `relay_channels/{code}/messages`, with a
+ * short code (shared out of band - read aloud, texted, whatever) letting Control and Companion
+ * agree on the same channel, since each phone's own anonymous-auth uid is otherwise useless for
+ * finding each other (it's random per install, never shared between the two devices).
  */
 class FirebaseDataSourceImpl(
     private val auth: FirebaseAuth,
@@ -37,6 +39,7 @@ class FirebaseDataSourceImpl(
 
     private val _connectionStatus = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected)
     private var uid: String? = null
+    private var channelCode: String? = null
     private var connectedListener: ValueEventListener? = null
 
     override suspend fun connect(): EmptyResult<DataError.Connection> {
@@ -49,15 +52,58 @@ class FirebaseDataSourceImpl(
     override suspend fun disconnect(): EmptyResult<DataError.Connection> {
         connectedListener?.let { database.getReference(".info/connected").removeEventListener(it) }
         connectedListener = null
+        channelCode = null
         _connectionStatus.value = ConnectionStatus.Disconnected
         return Result.Success(Unit)
     }
 
+    override suspend fun createChannel(): Result<String, DataError.Connection> {
+        val code = generateCode()
+        val result = registerAsControl(code)
+        if (result is Result.Error) return result
+        return Result.Success(code)
+    }
+
+    override suspend fun registerAsControl(code: String): EmptyResult<DataError.Connection> {
+        val currentUid = uid ?: return Result.Error(DataError.Connection.FIREBASE_UNAVAILABLE)
+        val result = writeValue(channelRef(code).child("controlUid"), currentUid)
+        if (result is Result.Success) channelCode = code
+        return result
+    }
+
+    override suspend fun joinChannel(code: String): Result<String, DataError.Connection> {
+        val currentUid = uid ?: return Result.Error(DataError.Connection.FIREBASE_UNAVAILABLE)
+        val controlUid = readValue(channelRef(code).child("controlUid"))
+            ?: return Result.Error(DataError.Connection.DEVICE_NOT_FOUND)
+        val writeResult = writeValue(channelRef(code).child("companionUid"), currentUid)
+        if (writeResult is Result.Error) return writeResult
+        channelCode = code
+        return Result.Success(controlUid)
+    }
+
+    override fun observePeerJoined(code: String): Flow<String> = callbackFlow {
+        val ref = channelRef(code).child("companionUid")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                trySend(snapshot.getValue(String::class.java))
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                logger.warn("Peer-joined listener cancelled", error.toException())
+                close(error.toException())
+            }
+        }
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }.mapNotNull { it }
+
     override suspend fun sendMessage(message: String): EmptyResult<DataError.Connection> {
         val ref = messagesRef() ?: return Result.Error(DataError.Connection.NOT_CONNECTED)
+        val currentUid = uid ?: return Result.Error(DataError.Connection.NOT_CONNECTED)
         return try {
             val payload = mapOf(
                 "payload" to message,
+                "senderUid" to currentUid,
                 "timestamp" to ServerValue.TIMESTAMP,
                 "delivered" to false
             )
@@ -82,6 +128,10 @@ class FirebaseDataSourceImpl(
         val query = ref.orderByChild("timestamp").startAt(cutoff)
         val listener = object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
+                // The channel is a shared node both sides push to - without this we'd receive our
+                // own messages echoed straight back.
+                val senderUid = snapshot.child("senderUid").getValue(String::class.java)
+                if (senderUid == uid) return
                 val payload = snapshot.child("payload").getValue(String::class.java)
                 if (payload != null) {
                     trySend(payload)
@@ -126,7 +176,59 @@ class FirebaseDataSourceImpl(
     }
 
     private fun messagesRef(): DatabaseReference? {
-        val currentUid = uid ?: return null
-        return database.getReference("users").child(currentUid).child("messages")
+        val code = channelCode ?: return null
+        return channelRef(code).child("messages")
+    }
+
+    private fun channelRef(code: String): DatabaseReference =
+        database.getReference(CHANNELS_PATH).child(code)
+
+    private fun generateCode(): String = Random.nextInt(100_000, 1_000_000).toString()
+
+    private suspend fun writeValue(
+        ref: DatabaseReference,
+        value: String
+    ): EmptyResult<DataError.Connection> {
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                ref.setValue(value)
+                    .addOnSuccessListener {
+                        if (continuation.isActive) continuation.resume(
+                            Result.Success(
+                                Unit
+                            )
+                        )
+                    }
+                    .addOnFailureListener {
+                        logger.warn("Failed to write relay channel value", it)
+                        if (continuation.isActive) continuation.resume(Result.Error(DataError.Connection.FIREBASE_UNAVAILABLE))
+                    }
+            }
+        } catch (e: Exception) {
+            Result.Error(DataError.Connection.FIREBASE_UNAVAILABLE)
+        }
+    }
+
+    private suspend fun readValue(ref: DatabaseReference): String? {
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                ref.addListenerForSingleValueEvent(object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        if (continuation.isActive) continuation.resume(snapshot.getValue(String::class.java))
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        logger.warn("Failed to read relay channel value", error.toException())
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+                })
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private companion object {
+        const val CHANNELS_PATH = "relay_channels"
     }
 }

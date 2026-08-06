@@ -32,6 +32,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -310,13 +311,73 @@ fun ConnectionSetupScreen(
                             }
                         }
                     }
+                } else if (state.selectedType == ConnectionType.FIREBASE) {
+                    if (state.relayCode == null) {
+                        OutlinedButton(
+                            onClick = { onAction(ConnectionSetupAction.OnGenerateRelayCodeClick) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.connection_setup_generate_code))
+                        }
+                    } else {
+                        Text(
+                            text = stringResource(R.string.connection_setup_share_code),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = state.relayCode,
+                            style = MaterialTheme.typography.headlineMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text(
+                                text = stringResource(R.string.connection_setup_waiting_for_companion),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             } else if (state.role == AppRole.COMPANION && state.selectedType != null) {
-                Text(
-                    text = stringResource(R.string.connection_setup_companion_waiting),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (state.selectedType == ConnectionType.FIREBASE) {
+                    OutlinedTextField(
+                        value = state.relayCodeInput,
+                        onValueChange = { onAction(ConnectionSetupAction.OnRelayCodeInputChange(it)) },
+                        label = { Text(stringResource(R.string.connection_setup_enter_code)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = { onAction(ConnectionSetupAction.OnJoinRelayCodeClick) },
+                        enabled = state.relayCodeInput.isNotBlank() && !state.isPairing,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (state.isPairing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Text(stringResource(R.string.connection_setup_join_code))
+                        }
+                    }
+                } else {
+                    Text(
+                        text = stringResource(R.string.connection_setup_companion_waiting),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Button(

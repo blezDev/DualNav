@@ -18,7 +18,9 @@ data class ConnectionSetupState(
     val isConnecting: Boolean = false,
     val isPairing: Boolean = false,
     val showBackConfirmation: Boolean = false,
-    val pairingState: PairingState = PairingState.Idle
+    val pairingState: PairingState = PairingState.Idle,
+    val relayCode: String? = null,
+    val relayCodeInput: String = ""
 )
 
 sealed interface ConnectionSetupAction {
@@ -32,6 +34,9 @@ sealed interface ConnectionSetupAction {
     data object OnCancelPairingClick : ConnectionSetupAction
     data object OnAcceptPairingClick : ConnectionSetupAction
     data object OnRejectPairingClick : ConnectionSetupAction
+    data object OnGenerateRelayCodeClick : ConnectionSetupAction
+    data class OnRelayCodeInputChange(val value: String) : ConnectionSetupAction
+    data object OnJoinRelayCodeClick : ConnectionSetupAction
 }
 
 sealed interface ConnectionSetupEvent {
