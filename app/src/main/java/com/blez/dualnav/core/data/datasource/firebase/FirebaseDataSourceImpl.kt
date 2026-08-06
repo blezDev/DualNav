@@ -59,6 +59,7 @@ class FirebaseDataSourceImpl(
 
     override suspend fun createChannel(): Result<String, DataError.Connection> {
         val code = generateCode()
+        logger.info("createChannel: generated code $code")
         val result = registerAsControl(code)
         if (result is Result.Error) return result
         return Result.Success(code)
@@ -66,16 +67,21 @@ class FirebaseDataSourceImpl(
 
     override suspend fun registerAsControl(code: String): EmptyResult<DataError.Connection> {
         val currentUid = uid ?: return Result.Error(DataError.Connection.FIREBASE_UNAVAILABLE)
+        logger.info("registerAsControl: writing controlUid=$currentUid at code=$code")
         val result = writeValue(channelRef(code).child("controlUid"), currentUid)
+        logger.info("registerAsControl: write result=$result")
         if (result is Result.Success) channelCode = code
         return result
     }
 
     override suspend fun joinChannel(code: String): Result<String, DataError.Connection> {
         val currentUid = uid ?: return Result.Error(DataError.Connection.FIREBASE_UNAVAILABLE)
+        logger.info("joinChannel: looking up controlUid at code=$code")
         val controlUid = readValue(channelRef(code).child("controlUid"))
-            ?: return Result.Error(DataError.Connection.DEVICE_NOT_FOUND)
+        logger.info("joinChannel: controlUid=$controlUid")
+        if (controlUid == null) return Result.Error(DataError.Connection.DEVICE_NOT_FOUND)
         val writeResult = writeValue(channelRef(code).child("companionUid"), currentUid)
+        logger.info("joinChannel: writing companionUid=$currentUid, result=$writeResult")
         if (writeResult is Result.Error) return writeResult
         channelCode = code
         return Result.Success(controlUid)
@@ -83,8 +89,10 @@ class FirebaseDataSourceImpl(
 
     override fun observePeerJoined(code: String): Flow<String> = callbackFlow {
         val ref = channelRef(code).child("companionUid")
+        logger.info("observePeerJoined: attaching listener at code=$code")
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                logger.info("observePeerJoined: onDataChange value=${snapshot.getValue(String::class.java)}")
                 trySend(snapshot.getValue(String::class.java))
             }
 

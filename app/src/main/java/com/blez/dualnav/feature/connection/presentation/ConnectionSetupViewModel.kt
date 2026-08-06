@@ -128,18 +128,23 @@ class ConnectionSetupViewModel(
     }
 
     private fun selectConnectionType(type: ConnectionType) {
-        val role = _state.value.role ?: return
-        _state.update {
-            it.copy(
-                selectedType = type,
-                isConnecting = true,
-                devices = emptyList(),
-                selectedDeviceId = null,
-                relayCode = null,
-                relayCodeInput = ""
-            )
-        }
+        // state.role is set by a separate init coroutine reading DataStore - tapping a
+        // connection type before that read finishes (very plausible on a freshly-composed
+        // screen) used to silently no-op here. Fall back to a direct read so this never
+        // depends on winning that race.
         viewModelScope.launch {
+            val role = _state.value.role ?: deviceRepository.getDeviceRole() ?: return@launch
+            _state.update {
+                it.copy(
+                    role = role,
+                    selectedType = type,
+                    isConnecting = true,
+                    devices = emptyList(),
+                    selectedDeviceId = null,
+                    relayCode = null,
+                    relayCodeInput = ""
+                )
+            }
             selectConnectionTypeUseCase(role, type)
                 .onSuccess {
                     ensureLocalDeviceIdentityUseCase(deviceName = Build.MODEL, connectionType = type)

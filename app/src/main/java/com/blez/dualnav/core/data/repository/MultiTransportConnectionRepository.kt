@@ -20,7 +20,6 @@ import com.blez.dualnav.core.domain.util.Logger
 import com.blez.dualnav.core.domain.util.MessageProtocol
 import com.blez.dualnav.core.domain.util.PairingRequest
 import com.blez.dualnav.core.domain.util.Result
-import com.blez.dualnav.core.domain.util.map
 import com.blez.dualnav.core.domain.util.onSuccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +37,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
@@ -66,6 +66,13 @@ class MultiTransportConnectionRepository(
     private var pendingIncomingRequest: PairingRequest? = null
     private var relayPeerWaitJob: Job? = null
 
+    /** Firebase's raw `.info/connected` only means "this phone is online" - true the instant
+     * Cloud Relay is selected, well before any pairing code exists. Gates [rawConnectionStatus]
+     * so Connected isn't reported (and Continue/auto-navigate don't fire) until a channel is
+     * actually established on both sides. */
+    @Volatile
+    private var firebaseChannelReady = false
+
     init {
         watchForUnexpectedDisconnects()
         watchIncomingPairingRequests()
@@ -79,6 +86,13 @@ class MultiTransportConnectionRepository(
     ): EmptyResult<DataError> {
         isManualDisconnect = false
         lastPairedDeviceId = null
+        // Switching connection types (e.g. abandoning a Cloud Relay "waiting for peer" attempt
+        // for Bluetooth instead) must not leave a stale AwaitingConfirmation/WaitingForRelayPeer
+        // behind - getConnectionStatus() would keep masking the new transport's genuinely-
+        // Connected status as Reconnecting forever, since nothing else ever clears it.
+        _pairingState.value = PairingState.Idle
+        relayPeerWaitJob?.cancel()
+        relayPeerWaitJob = null
         preferencesDataSource.saveDeviceRole(deviceRole)
         preferencesDataSource.saveConnectionType(connectionType)
         return connect(connectionType)
@@ -246,7 +260,9 @@ class MultiTransportConnectionRepository(
      * un-masks [getConnectionStatus] so Control's screen (and its auto-navigate watcher) can
      * finally treat this as Connected. */
     private suspend fun awaitRelayPeer(code: String) {
+        logger.info("awaitRelayPeer: waiting for companion to join code=$code")
         val companionUid = firebaseDataSource.observePeerJoined(code).first()
+        logger.info("awaitRelayPeer: companion joined with uid=$companionUid")
         val existing = (deviceRepository.getPairedDevice() as? Result.Success)?.data
         val info = (existing ?: DeviceInfo(
             deviceId = code,
@@ -259,6 +275,7 @@ class MultiTransportConnectionRepository(
         deviceRepository.savePairedDevice(info)
         deviceRepository.setConnectionEstablished(true)
         syncSessionActive(companionUid)
+        firebaseChannelReady = true
         _pairingState.value = PairingState.Idle
     }
 
@@ -282,6 +299,7 @@ class MultiTransportConnectionRepository(
                 )
                 deviceRepository.setConnectionEstablished(true)
                 repositoryScope.launch { syncSessionActive(controlUid) }
+                firebaseChannelReady = true
                 Result.Success(Unit)
             }
         }
@@ -323,6 +341,7 @@ class MultiTransportConnectionRepository(
         isManualDisconnect = true
         relayPeerWaitJob?.cancel()
         relayPeerWaitJob = null
+        firebaseChannelReady = false
         deviceRepository.setConnectionEstablished(false)
         return when (preferencesDataSource.getConnectionType().first()) {
             ConnectionType.BLUETOOTH -> bluetoothDataSource.disconnect()
@@ -411,7 +430,13 @@ class MultiTransportConnectionRepository(
             when (connectionType) {
                 ConnectionType.BLUETOOTH -> bluetoothDataSource.getConnectionStatus()
                 ConnectionType.WIFI -> wifiDataSource.getConnectionStatus()
-                ConnectionType.FIREBASE -> firebaseDataSource.getConnectionStatus()
+                ConnectionType.FIREBASE -> firebaseDataSource.getConnectionStatus().map { status ->
+                    if (status is ConnectionStatus.Connected && !firebaseChannelReady) {
+                        ConnectionStatus.Reconnecting
+                    } else {
+                        status
+                    }
+                }
                 null -> flowOf(ConnectionStatus.Disconnected)
             }
         }
@@ -642,17 +667,24 @@ class MultiTransportConnectionRepository(
 
     /** Re-signs in (this repository, and any prior channel registration, doesn't survive process
      * death) and re-registers on the persisted relay code - Control's controlUid write and
-     * Companion's companionUid write are both idempotent, so replaying either is safe. */
+     * Companion's companionUid write are both idempotent, so replaying either is safe. Only
+     * reachable for a pairing that already completed once (the persisted record proves it), so
+     * [firebaseChannelReady] can be set immediately rather than waiting on anything. */
     private suspend fun reconnectFirebase(): EmptyResult<DataError.Connection> {
         val connectResult = firebaseDataSource.connect()
         if (connectResult is Result.Error) return connectResult
         val code = (deviceRepository.getPairedDevice() as? Result.Success)?.data?.deviceId
             ?: return connectResult
-        return when (deviceRepository.getDeviceRole()) {
+        val result = when (deviceRepository.getDeviceRole()) {
             AppRole.CONTROL -> firebaseDataSource.registerAsControl(code)
-            AppRole.COMPANION -> firebaseDataSource.joinChannel(code).map { }
+            AppRole.COMPANION -> when (val joinResult = firebaseDataSource.joinChannel(code)) {
+                is Result.Success -> Result.Success(Unit)
+                is Result.Error -> joinResult
+            }
             null -> connectResult
         }
+        if (result is Result.Success) firebaseChannelReady = true
+        return result
     }
 
     /**
