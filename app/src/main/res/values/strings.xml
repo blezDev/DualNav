@@ -115,6 +115,7 @@
     <string name="control_home_stop_sent">Stop sent</string>
     <string name="control_home_resume_sent">Resume sent</string>
     <string name="control_home_stop_added">Stop added</string>
+    <string name="cd_open_google_maps">Open Google Maps</string>
 
     <!-- Floating overlay -->
     <string name="overlay_notification_channel">Floating widget</string>

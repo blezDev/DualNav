@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -226,177 +227,205 @@ fun ConnectionSetupScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp),
+                .padding(innerPadding),
+            contentPadding = PaddingValues(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                val options = listOf(
-                    ConnectionType.BLUETOOTH to R.string.connection_type_bluetooth,
-                    ConnectionType.WIFI to R.string.connection_type_wifi,
-                    ConnectionType.FIREBASE to R.string.connection_type_firebase
-                )
-                options.forEachIndexed { index, (type, labelRes) ->
-                    SegmentedButton(
-                        selected = state.selectedType == type,
-                        onClick = { onTypeSelected(type) },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
-                    ) {
-                        Text(stringResource(labelRes))
+            item {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    val options = listOf(
+                        ConnectionType.BLUETOOTH to R.string.connection_type_bluetooth,
+                        ConnectionType.WIFI to R.string.connection_type_wifi,
+                        ConnectionType.FIREBASE to R.string.connection_type_firebase
+                    )
+                    options.forEachIndexed { index, (type, labelRes) ->
+                        SegmentedButton(
+                            selected = state.selectedType == type,
+                            onClick = { onTypeSelected(type) },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = options.size
+                            )
+                        ) {
+                            Text(stringResource(labelRes))
+                        }
                     }
                 }
             }
 
-            ConnectionStatusCard(status = state.status, isConnecting = state.isConnecting)
+            item {
+                ConnectionStatusCard(status = state.status, isConnecting = state.isConnecting)
+            }
 
             if (state.role == AppRole.CONTROL) {
                 // Only Control discovers and initiates pairing; Companion just waits to be paired with.
                 if (state.selectedType != null && state.selectedType != ConnectionType.FIREBASE) {
-                    OutlinedButton(
-                        onClick = { onAction(ConnectionSetupAction.OnDiscoverClick) },
-                        enabled = !state.isDiscovering,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            stringResource(
-                                if (state.isDiscovering) R.string.connection_setup_discovering
-                                else R.string.connection_setup_discover
+                    item {
+                        OutlinedButton(
+                            onClick = { onAction(ConnectionSetupAction.OnDiscoverClick) },
+                            enabled = !state.isDiscovering,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                stringResource(
+                                    if (state.isDiscovering) R.string.connection_setup_discovering
+                                    else R.string.connection_setup_discover
+                                )
                             )
-                        )
+                        }
                     }
 
                     if (state.devices.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.connection_setup_no_devices),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        item {
+                            Text(
+                                text = stringResource(R.string.connection_setup_no_devices),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            items(items = state.devices, key = { it.id }) { device ->
-                                val isSelected = device.id == state.selectedDeviceId
-                                val selectable = !device.isConnected && !state.isPairing
-                                ListItem(
-                                    leadingContent = {
-                                        RadioButton(
-                                            selected = isSelected,
-                                            onClick = null,
-                                            enabled = selectable
+                        items(items = state.devices, key = { it.id }) { device ->
+                            val isSelected = device.id == state.selectedDeviceId
+                            val selectable = !device.isConnected && !state.isPairing
+                            ListItem(
+                                leadingContent = {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = null,
+                                        enabled = selectable
+                                    )
+                                },
+                                headlineContent = { Text(device.name) },
+                                trailingContent = {
+                                    if (device.isConnected) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckCircle,
+                                            contentDescription = stringResource(R.string.cd_connection_status_connected)
                                         )
-                                    },
-                                    headlineContent = { Text(device.name) },
-                                    trailingContent = {
-                                        if (device.isConnected) {
-                                            Icon(
-                                                imageVector = Icons.Filled.CheckCircle,
-                                                contentDescription = stringResource(R.string.cd_connection_status_connected)
-                                            )
-                                        }
-                                    },
-                                    colors = if (isSelected) {
-                                        ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                                    } else {
-                                        ListItemDefaults.colors()
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(enabled = selectable) {
-                                            onAction(ConnectionSetupAction.OnDeviceClick(device.id))
-                                        }
-                                )
-                            }
+                                    }
+                                },
+                                colors = if (isSelected) {
+                                    ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                } else {
+                                    ListItemDefaults.colors()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = selectable) {
+                                        onAction(ConnectionSetupAction.OnDeviceClick(device.id))
+                                    }
+                            )
                         }
                     }
                 } else if (state.selectedType == ConnectionType.FIREBASE) {
                     if (state.relayCode == null) {
-                        OutlinedButton(
-                            onClick = { onAction(ConnectionSetupAction.OnGenerateRelayCodeClick) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(stringResource(R.string.connection_setup_generate_code))
+                        item {
+                            OutlinedButton(
+                                onClick = { onAction(ConnectionSetupAction.OnGenerateRelayCodeClick) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(stringResource(R.string.connection_setup_generate_code))
+                            }
                         }
                     } else {
-                        Text(
-                            text = stringResource(R.string.connection_setup_share_code),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = state.relayCode,
-                            style = MaterialTheme.typography.headlineMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
+                        item {
                             Text(
-                                text = stringResource(R.string.connection_setup_waiting_for_companion),
-                                style = MaterialTheme.typography.bodySmall,
+                                text = stringResource(R.string.connection_setup_share_code),
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                        item {
+                            Text(
+                                text = state.relayCode,
+                                style = MaterialTheme.typography.headlineMedium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        item {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    text = stringResource(R.string.connection_setup_waiting_for_companion),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
             } else if (state.role == AppRole.COMPANION && state.selectedType != null) {
                 if (state.selectedType == ConnectionType.FIREBASE) {
-                    OutlinedTextField(
-                        value = state.relayCodeInput,
-                        onValueChange = { onAction(ConnectionSetupAction.OnRelayCodeInputChange(it)) },
-                        label = { Text(stringResource(R.string.connection_setup_enter_code)) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Button(
-                        onClick = { onAction(ConnectionSetupAction.OnJoinRelayCodeClick) },
-                        enabled = state.relayCodeInput.isNotBlank() && !state.isPairing,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (state.isPairing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        } else {
-                            Text(stringResource(R.string.connection_setup_join_code))
+                    item {
+                        OutlinedTextField(
+                            value = state.relayCodeInput,
+                            onValueChange = {
+                                onAction(
+                                    ConnectionSetupAction.OnRelayCodeInputChange(
+                                        it
+                                    )
+                                )
+                            },
+                            label = { Text(stringResource(R.string.connection_setup_enter_code)) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    item {
+                        Button(
+                            onClick = { onAction(ConnectionSetupAction.OnJoinRelayCodeClick) },
+                            enabled = state.relayCodeInput.isNotBlank() && !state.isPairing,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (state.isPairing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                Text(stringResource(R.string.connection_setup_join_code))
+                            }
                         }
                     }
                 } else {
-                    Text(
-                        text = stringResource(R.string.connection_setup_companion_waiting),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    item {
+                        Text(
+                            text = stringResource(R.string.connection_setup_companion_waiting),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
-            Button(
-                onClick = { onAction(ConnectionSetupAction.OnContinueClick) },
-                enabled = !state.isPairing &&
-                        (state.status is ConnectionStatus.Connected || state.selectedDeviceId != null),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (state.isPairing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Text(stringResource(R.string.connection_setup_continue))
+            item {
+                Button(
+                    onClick = { onAction(ConnectionSetupAction.OnContinueClick) },
+                    enabled = !state.isPairing &&
+                            (state.status is ConnectionStatus.Connected || state.selectedDeviceId != null),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (state.isPairing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Text(stringResource(R.string.connection_setup_continue))
+                    }
                 }
             }
         }

@@ -1,5 +1,8 @@
 package com.blez.dualnav.feature.control.presentation
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,8 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material3.AlertDialog
@@ -98,6 +104,7 @@ fun ControlHomeScreen(
 ) {
     BackHandler { onAction(ControlHomeAction.OnBackPress) }
 
+    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -106,11 +113,37 @@ fun ControlHomeScreen(
         focusManager.clearFocus()
     }
 
+    fun openGoogleMaps() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=")).apply {
+            setPackage(GOOGLE_MAPS_PACKAGE)
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=")))
+            } catch (e2: ActivityNotFoundException) {
+                context.startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://play.google.com/store/apps/details?id=$GOOGLE_MAPS_PACKAGE")
+                    )
+                )
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.control_home_title)) },
                 actions = {
+                    IconButton(onClick = { openGoogleMaps() }) {
+                        Icon(
+                            Icons.Filled.Map,
+                            contentDescription = stringResource(R.string.cd_open_google_maps)
+                        )
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.cd_settings))
                     }
@@ -123,6 +156,7 @@ fun ControlHomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -236,6 +270,8 @@ fun ControlHomeScreen(
         )
     }
 }
+
+private const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
 
 private data class TravelModeOption(
     val mode: TravelMode,
